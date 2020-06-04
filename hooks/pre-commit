@@ -1,0 +1,37 @@
+#!/bin/bash
+cargo +nightly fmt -- --version &>/dev/null
+if [ $? != 0 ]; then
+    printf "[pre_commit] \033[0;31merror\033[0m: \"cargo +nightly fmt\" not available?\n"
+    printf "[pre_commit] Please install rustfmt on nightly toolchain using following command.\n"
+    printf "[pre_commit] rustup component add rustfmt --toolchain nightly"
+    exit 1
+fi
+
+for file in $(git diff --name-only --cached); do
+    if [ ${file: -3} == ".rs" ]; then
+        cargo +nightly fmt -- $file
+        if [ $? != 0 ]; then
+            printf "[pre_commit] Rust file %s format error. Abort commit.\n" "$file"
+            exit 1
+        else
+            printf "[pre_commit] Formatted file: %s\n" "$file"
+            git add $file
+        fi
+    fi
+done
+
+clang-format --version &>/dev/null
+if [ $? != 0 ]; then
+    printf "[pre_commit] \033[0;31merror\033[0m: \"clang-format\" not available?\n"
+    printf "[pre_commit] Please install clang-format.\n"
+    exit 1
+fi
+
+for file in $(git diff --name-only --cached); do
+    if [ ${file: -2} == ".c" ] || [ ${file: -3} == ".cpp" ]; then
+        clang-format -i $file
+        git add $file
+    fi
+done
+
+exit 0

@@ -1,0 +1,49 @@
+result/data/QUIC/QUIC-bandwidth-10M.log  result/server_log/QUIC-server-10M.log
+result/data/Deadline/Deadline-bandwidth-10M.log  result/server_log/Deadline-server-10M.log
+result/data/Priority/Priority-bandwidth-10M.log  result/server_log/Priority-server-10M.log
+result/data/DTP/DTP-bandwidth-10M.log  result/server_log/DTP-server-10M.log
+
+result/data/QUIC/QUIC-bandwidth-9M.log  result/server_log/QUIC-server-9M.log
+result/data/Deadline/Deadline-bandwidth-9M.log  result/server_log/Deadline-server-9M.log
+result/data/Priority/Priority-bandwidth-9M.log  result/server_log/Priority-server-9M.log
+result/data/DTP/DTP-bandwidth-9M.log  result/server_log/DTP-server-9M.log
+
+result/data/QUIC/QUIC-bandwidth-8M.log  result/server_log/QUIC-server-8M.log
+result/data/Deadline/Deadline-bandwidth-8M.log  result/server_log/Deadline-server-8M.log
+result/data/Priority/Priority-bandwidth-8M.log  result/server_log/Priority-server-8M.log
+result/data/DTP/DTP-bandwidth-8M.log  result/server_log/DTP-server-8M.log
+
+result/data/QUIC/QUIC-bandwidth-7M.log  result/server_log/QUIC-server-7M.log
+result/data/Deadline/Deadline-bandwidth-7M.log  result/server_log/Deadline-server-7M.log
+result/data/Priority/Priority-bandwidth-7M.log  result/server_log/Priority-server-7M.log
+result/data/DTP/DTP-bandwidth-7M.log  result/server_log/DTP-server-7M.log
+
+result/data/QUIC/QUIC-bandwidth-6M.log  result/server_log/QUIC-server-6M.log
+result/data/Deadline/Deadline-bandwidth-6M.log  result/server_log/Deadline-server-6M.log
+result/data/Priority/Priority-bandwidth-6M.log  result/server_log/Priority-server-6M.log
+result/data/DTP/DTP-bandwidth-6M.log  result/server_log/DTP-server-6M.log
+
+result/data/QUIC/QUIC-bandwidth-5M.log  result/server_log/QUIC-server-5M.log
+result/data/Deadline/Deadline-bandwidth-5M.log  result/server_log/Deadline-server-5M.log
+result/data/Priority/Priority-bandwidth-5M.log  result/server_log/Priority-server-5M.log
+result/data/DTP/DTP-bandwidth-5M.log  result/server_log/DTP-server-5M.log
+
+result/data/QUIC/QUIC-bandwidth-4M.log  result/server_log/QUIC-server-4M.log
+result/data/Deadline/Deadline-bandwidth-4M.log  result/server_log/Deadline-server-4M.log
+result/data/Priority/Priority-bandwidth-4M.log  result/server_log/Priority-server-4M.log
+result/data/DTP/DTP-bandwidth-4M.log  result/server_log/DTP-server-4M.log
+
+result/data/QUIC/QUIC-bandwidth-3M.log  result/server_log/QUIC-server-3M.log
+result/data/Deadline/Deadline-bandwidth-3M.log  result/server_log/Deadline-server-3M.log
+result/data/Priority/Priority-bandwidth-3M.log  result/server_log/Priority-server-3M.log
+result/data/DTP/DTP-bandwidth-3M.log  result/server_log/DTP-server-3M.log
+
+result/data/QUIC/QUIC-bandwidth-2M.log  result/server_log/QUIC-server-2M.log
+result/data/Deadline/Deadline-bandwidth-2M.log  result/server_log/Deadline-server-2M.log
+result/data/Priority/Priority-bandwidth-2M.log  result/server_log/Priority-server-2M.log
+result/data/DTP/DTP-bandwidth-2M.log  result/server_log/DTP-server-2M.log
+
+result/data/QUIC/QUIC-bandwidth-1M.log  result/server_log/QUIC-server-1M.log
+result/data/Deadline/Deadline-bandwidth-1M.log  result/server_log/Deadline-server-1M.log
+result/data/Priority/Priority-bandwidth-1M.log  result/server_log/Priority-server-1M.log
+result/data/DTP/DTP-bandwidth-1M.log  result/server_log/DTP-server-1M.log

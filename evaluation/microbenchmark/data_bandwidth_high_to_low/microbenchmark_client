@@ -1,0 +1,50 @@
+config/config-QUIC.txt   result/client_log/QUIC-client-10M.log
+config/config-Deadline.txt   result/client_log/Deadline-client-10M.log
+config/config-Priority.txt   result/client_log/Priority-client-10M.log
+config/config-DTP.txt   result/client_log/DTP-client-10M.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-9M.log
+config/config-Deadline.txt   result/client_log/Deadline-client-9M.log
+config/config-Priority.txt   result/client_log/Priority-client-9M.log
+config/config-DTP.txt   result/client_log/DTP-client-9M.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-8M.log
+config/config-Deadline.txt   result/client_log/Deadline-client-8M.log
+config/config-Priority.txt   result/client_log/Priority-client-8M.log
+config/config-DTP.txt   result/client_log/DTP-client-8M.log
+
+
+config/config-QUIC.txt   result/client_log/QUIC-client-7M.log
+config/config-Deadline.txt   result/client_log/Deadline-client-7M.log
+config/config-Priority.txt   result/client_log/Priority-client-7M.log
+config/config-DTP.txt   result/client_log/DTP-client-7M.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-6M.log
+config/config-Deadline.txt   result/client_log/Deadline-client-6M.log
+config/config-Priority.txt   result/client_log/Priority-client-6M.log
+config/config-DTP.txt   result/client_log/DTP-client-6M.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-5M.log
+config/config-Deadline.txt   result/client_log/Deadline-client-5M.log
+config/config-Priority.txt   result/client_log/Priority-client-5M.log
+config/config-DTP.txt   result/client_log/DTP-client-5M.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-4M.log
+config/config-Deadline.txt   result/client_log/Deadline-client-4M.log
+config/config-Priority.txt   result/client_log/Priority-client-4M.log
+config/config-DTP.txt   result/client_log/DTP-client-4M.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-3M.log
+config/config-Deadline.txt   result/client_log/Deadline-client-3M.log
+config/config-Priority.txt   result/client_log/Priority-client-3M.log
+config/config-DTP.txt   result/client_log/DTP-client-3M.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-2M.log
+config/config-Deadline.txt   result/client_log/Deadline-client-2M.log
+config/config-Priority.txt   result/client_log/Priority-client-2M.log
+config/config-DTP.txt   result/client_log/DTP-client-2M.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-1M.log
+config/config-Deadline.txt   result/client_log/Deadline-client-1M.log
+config/config-Priority.txt   result/client_log/Priority-client-1M.log
+config/config-DTP.txt   result/client_log/DTP-client-1M.log

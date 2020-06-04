@@ -1,0 +1,49 @@
+config/config-QUIC.txt   result/client_log/QUIC-client-0ms.log
+config/config-Deadline.txt   result/client_log/Deadline-client-0ms.log
+config/config-Priority.txt   result/client_log/Priority-client-0ms.log
+config/config-DTP.txt   result/client_log/DTP-client-0ms.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-20ms.log
+config/config-Deadline.txt   result/client_log/Deadline-client-20ms.log
+config/config-Priority.txt   result/client_log/Priority-client-20ms.log
+config/config-DTP.txt   result/client_log/DTP-client-20ms.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-40ms.log
+config/config-Deadline.txt   result/client_log/Deadline-client-40ms.log
+config/config-Priority.txt   result/client_log/Priority-client-40ms.log
+config/config-DTP.txt   result/client_log/DTP-client-40ms.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-60ms.log
+config/config-Deadline.txt   result/client_log/Deadline-client-60ms.log
+config/config-Priority.txt   result/client_log/Priority-client-60ms.log
+config/config-DTP.txt   result/client_log/DTP-client-60ms.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-80ms.log
+config/config-Deadline.txt   result/client_log/Deadline-client-80ms.log
+config/config-Priority.txt   result/client_log/Priority-client-80ms.log
+config/config-DTP.txt   result/client_log/DTP-client-80ms.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-100ms.log
+config/config-Deadline.txt   result/client_log/Deadline-client-100ms.log
+config/config-Priority.txt   result/client_log/Priority-client-100ms.log
+config/config-DTP.txt   result/client_log/DTP-client-100ms.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-120ms.log
+config/config-Deadline.txt   result/client_log/Deadline-client-120ms.log
+config/config-Priority.txt   result/client_log/Priority-client-120ms.log
+config/config-DTP.txt   result/client_log/DTP-client-120ms.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-140ms.log
+config/config-Deadline.txt   result/client_log/Deadline-client-140ms.log
+config/config-Priority.txt   result/client_log/Priority-client-140ms.log
+config/config-DTP.txt   result/client_log/DTP-client-140ms.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-160ms.log
+config/config-Deadline.txt   result/client_log/Deadline-client-160ms.log
+config/config-Priority.txt   result/client_log/Priority-client-160ms.log
+config/config-DTP.txt   result/client_log/DTP-client-160ms.log
+
+config/config-QUIC.txt   result/client_log/QUIC-client-180ms.log
+config/config-Deadline.txt   result/client_log/Deadline-client-180ms.log
+config/config-Priority.txt   result/client_log/Priority-client-180ms.log
+config/config-DTP.txt   result/client_log/DTP-client-180ms.log
