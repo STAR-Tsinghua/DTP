@@ -305,9 +305,9 @@ impl StreamMap {
     pub fn peek_flushable(
         &mut self, _bandwidth: f64, _rtt: f64,
     ) -> Result<Option<u64>> {
-        /// ******test*********************
+        // ******test*********************
         hello_aitrans();
-        /// *******************************
+        // *******************************
         if !self.has_flushable() {
             Ok(None)
         } else {

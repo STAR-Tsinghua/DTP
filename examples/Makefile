@@ -2,7 +2,7 @@ OS := $(shell uname)
 
 SOURCE_DIR = ../src
 BUILD_DIR = $(CURDIR)/build
-LIB_DIR = $(BUILD_DIR)/release
+LIB_DIR = $(BUILD_DIR)/debug
 INCLUDE_DIR = ../include
 
 INCS = -I$(INCLUDE_DIR)
@@ -37,7 +37,7 @@ http3-server: http3-server.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
 
 $(LIB_DIR)/libquiche.a: $(shell find $(SOURCE_DIR) -type f -name '*.rs')
-	cd .. && cargo build --release --target-dir $(BUILD_DIR)
+	cd .. && cargo build --target-dir $(BUILD_DIR)
 
 clean:
 	@$(RM) -rf client client_trace server http3-client http3-server build/

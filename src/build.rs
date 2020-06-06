@@ -206,6 +206,7 @@ fn main() {
     }
 
     cc::Build::new()
-        .file("src/aitrans/scheduler.c")
+        .cpp(true)
+        .file("src/aitrans/scheduler.cpp")
         .compile("aitrans");
 }
