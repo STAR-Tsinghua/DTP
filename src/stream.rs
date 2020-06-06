@@ -100,16 +100,15 @@ pub struct StreamMap {
     /// of streams.
     writable: HashSet<u64>,
 
-    /// Set of stream IDs corresponding to blocks that have been canceled
-    /// because of having missed deadline.
-    /// insert when canceled, remove when reset frame sended.
-    canceled: HashSet<u64>,
+    // /// Set of stream IDs corresponding to blocks that have been canceled
+    // /// because of having missed deadline.
+    // /// insert when canceled, remove when reset frame sended.
+    // canceled: HashSet<u64>,
 
-    /// Set of stream IDs corresponding to blocks that have been canceled
-    /// because of having missed deadline.Use for dependency
-    /// insert when canceled, todo: remove
-    canceled_depend: HashSet<u64>,
-
+    // /// Set of stream IDs corresponding to blocks that have been canceled
+    // /// because of having missed deadline.Use for dependency
+    // /// insert when canceled, todo: remove
+    // canceled_depend: HashSet<u64>,
     /// Set of stream IDs corresponding to streams that are almost out of flow
     /// control credit and need to send MAX_STREAM_DATA. This is used to
     /// generate a `StreamIter` of streams without having to iterate over the
@@ -283,10 +282,10 @@ impl StreamMap {
         self.flushable.push_back(stream_id);
     }
 
-    /// todo: return sum of losted depend blocks' weight
-    pub fn check_depend(&self, stream_id: u64) -> bool {
-        self.is_canceled(stream_id)
-    }
+    // /// todo: return sum of losted depend blocks' weight
+    // pub fn check_depend(&self, stream_id: u64) -> bool {
+    //     self.is_canceled(stream_id)
+    // }
 
     /// Removes and returns the first stream ID from the flushable streams
     /// queue.
@@ -353,23 +352,23 @@ impl StreamMap {
             block_passed_time as u64 * block.send.deadline;
     }
 
-    /// cancel this block
-    pub fn cancel_block(&mut self, stream_id: u64) -> Result<()> {
-        let stream = self.streams.get_mut(&stream_id).unwrap();
-        // add id into Set of canceled, will send RESET_STREAM of this IDs in
-        // lib::send
-        self.canceled.insert(stream_id);
-        self.canceled_depend.insert(stream_id);
-        stream.send.shutdown()?;
-        // Once shutdown, the stream is guaranteed to be non-writable.
-        self.mark_writable(stream_id, false);
-        info!(
-            "cancel block {},len of streams: {}",
-            stream_id,
-            self.streams.len()
-        );
-        Ok(())
-    }
+    // /// cancel this block
+    // pub fn cancel_block(&mut self, stream_id: u64) -> Result<()> {
+    //     let stream = self.streams.get_mut(&stream_id).unwrap();
+    //     // add id into Set of canceled, will send RESET_STREAM of this IDs in
+    //     // lib::send
+    //     self.canceled.insert(stream_id);
+    //     self.canceled_depend.insert(stream_id);
+    //     stream.send.shutdown()?;
+    //     // Once shutdown, the stream is guaranteed to be non-writable.
+    //     self.mark_writable(stream_id, false);
+    //     info!(
+    //         "cancel block {},len of streams: {}",
+    //         stream_id,
+    //         self.streams.len()
+    //     );
+    //     Ok(())
+    // }
 
     /// Adds or removes the stream ID to/from the readable streams set.
     ///
@@ -396,21 +395,21 @@ impl StreamMap {
         }
     }
 
-    /// return ture if block has already been canceled
-    pub fn is_canceled(&self, stream_id: u64) -> bool {
-        self.canceled_depend.contains(&stream_id)
-    }
+    // /// return ture if block has already been canceled
+    // pub fn is_canceled(&self, stream_id: u64) -> bool {
+    //     self.canceled_depend.contains(&stream_id)
+    // }
 
-    /// Adds or removes the stream ID to/from the canceled streams set.
-    ///
-    /// If the stream was already in the list, this does nothing.
-    pub fn mark_canceled(&mut self, stream_id: u64, canceled: bool) {
-        if canceled {
-            self.canceled.insert(stream_id);
-        } else {
-            self.canceled.remove(&stream_id);
-        }
-    }
+    // /// Adds or removes the stream ID to/from the canceled streams set.
+    // ///
+    // /// If the stream was already in the list, this does nothing.
+    // pub fn mark_canceled(&mut self, stream_id: u64, canceled: bool) {
+    //     if canceled {
+    //         self.canceled.insert(stream_id);
+    //     } else {
+    //         self.canceled.remove(&stream_id);
+    //     }
+    // }
 
     /// Adds or removes the stream ID to/from the almost full streams set.
     ///
@@ -476,10 +475,10 @@ impl StreamMap {
         StreamIter::from(&self.writable)
     }
 
-    /// Creates an iterator over streams that need to send RESET_STREAM.
-    pub fn canceled(&self) -> StreamIter {
-        StreamIter::from(&self.canceled)
-    }
+    // /// Creates an iterator over streams that need to send RESET_STREAM.
+    // pub fn canceled(&self) -> StreamIter {
+    //     StreamIter::from(&self.canceled)
+    // }
 
     /// Creates an iterator over streams that need to send MAX_STREAM_DATA.
     pub fn almost_full(&self) -> StreamIter {
@@ -497,11 +496,11 @@ impl StreamMap {
         !self.almost_full.is_empty()
     }
 
-    /// Returns true if there are any streams that need to send RESET_STREAM
-    /// frame
-    pub fn has_canceled(&self) -> bool {
-        !self.canceled.is_empty()
-    }
+    // /// Returns true if there are any streams that need to send RESET_STREAM
+    // /// frame
+    // pub fn has_canceled(&self) -> bool {
+    //     !self.canceled.is_empty()
+    // }
 
     /// Returns true if the max bidirectional streams count needs to be updated
     /// by sending a MAX_STREAMS frame to the peer.
@@ -1163,7 +1162,7 @@ impl SendBuf {
 
     /// Creates a new send buffer with deadline
     fn new_full(
-        max_data: u64, deadline: u64, priority: u64, depend_id: u64,
+        max_data: u64, deadline: u64, priority: u64, _depend_id: u64,
     ) -> SendBuf {
         SendBuf {
             max_data,
