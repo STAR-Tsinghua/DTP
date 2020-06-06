@@ -204,4 +204,8 @@ fn main() {
     if cfg!(feature = "pkg-config-meta") {
         write_pkg_config();
     }
+
+    cc::Build::new()
+        .file("src/aitrans/scheduler.c")
+        .compile("aitrans");
 }

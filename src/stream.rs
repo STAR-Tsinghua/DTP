@@ -42,6 +42,15 @@ const MAX_WRITE_SIZE: usize = 1000;
 
 pub const MAX_DEADLINE: u64 = 9999999;
 pub const DEFAULT_PRIORITY: u64 = 9999999;
+#[link(name = "aitrans")]
+extern {
+    fn ChelloAitrans();
+}
+pub fn hello_aitrans() {
+    unsafe {
+        ChelloAitrans();
+    }
+}
 
 /// Keeps track of QUIC streams and enforces stream limits.
 #[derive(Default)]
@@ -296,6 +305,9 @@ impl StreamMap {
     pub fn peek_flushable(
         &mut self, _bandwidth: f64, _rtt: f64,
     ) -> Result<Option<u64>> {
+        /// ******test*********************
+        hello_aitrans();
+        /// *******************************
         if !self.has_flushable() {
             Ok(None)
         } else {
