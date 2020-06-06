@@ -42,14 +42,28 @@ const MAX_WRITE_SIZE: usize = 1000;
 
 pub const MAX_DEADLINE: u64 = 9999999;
 pub const DEFAULT_PRIORITY: u64 = 9999999;
+
+use std::ffi::CString;
+use std::os::raw::c_char;
 #[link(name = "aitrans")]
 extern {
-    fn ChelloAitrans();
+    fn ChelloAitrans(hello: *const c_char);
 }
-pub fn hello_aitrans() {
+pub fn hello_aitrans(hello: *const c_char) {
     unsafe {
-        ChelloAitrans();
+        ChelloAitrans(hello);
     }
+}
+use serde::{
+    Deserialize,
+    Serialize,
+};
+#[derive(Serialize, Deserialize)]
+pub struct Block {
+    id: u64,
+    deadline: u64,
+    priority: u64,
+    create_time: u64,
 }
 
 /// Keeps track of QUIC streams and enforces stream limits.
@@ -306,21 +320,34 @@ impl StreamMap {
         &mut self, _bandwidth: f64, _rtt: f64,
     ) -> Result<Option<u64>> {
         // ******test*********************
-        hello_aitrans();
+        let c_str = CString::new("hello").unwrap();
+
+        // and now you can obtain a pointer to a valid zero-terminated string
+        let c_ptr: *const c_char = c_str.as_ptr();
+
+        hello_aitrans(c_ptr);
         // *******************************
         if !self.has_flushable() {
             Ok(None)
         } else {
             let mut best_block_id: Option<u64> = None;
+            let mut blocks = Vec::new();
             for i in (0..self.flushable.len()).rev() {
                 let &id = self.flushable.get(i).unwrap();
-
+                let block = self.get_block(id);
+                blocks.push(block);
                 if best_block_id == None ||
                     self.is_better(best_block_id.unwrap(), id)
                 {
                     best_block_id = Some(id);
                 }
             }
+            let block_json_str = serde_json::to_string(&blocks).unwrap(); // todo:error(?)
+            let c_str = CString::new(block_json_str).unwrap();
+            // obtain a pointer to a valid zero-terminated string
+            let c_ptr: *const c_char = c_str.as_ptr();
+            hello_aitrans(c_ptr);
+            // info!("block_json_str: {}",block_json_str);
             // pop(return and remove) highest_stream_id
             for i in 0..self.flushable.len() {
                 let &id = self.flushable.get(i).unwrap();
@@ -330,6 +357,25 @@ impl StreamMap {
                 }
             }
             Ok(best_block_id)
+        }
+    }
+
+    pub fn get_block(&self, id: u64) -> Block {
+        let block = self.get(id).unwrap();
+        let create_time = match block
+            .send
+            .start_time
+            .unwrap()
+            .duration_since(SystemTime::UNIX_EPOCH)
+        {
+            Ok(n) => n.as_millis(),
+            Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+        };
+        Block {
+            id,
+            deadline: block.send.deadline,
+            priority: block.send.priority,
+            create_time: create_time as u64,
         }
     }
 

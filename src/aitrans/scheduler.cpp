@@ -1,2 +1,2 @@
 #include <cstdio>
-extern "C" void ChelloAitrans() { fprintf(stderr, "hello aitrans!\n"); }
+extern "C" void ChelloAitrans(char* hello) { fprintf(stderr, "%s\n",hello); }
