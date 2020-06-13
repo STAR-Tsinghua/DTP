@@ -47,23 +47,10 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 #[link(name = "aitrans")]
 extern {
-    fn ChelloAitrans(hello: *const c_char);
+    fn CselectBlock(blocks_str: *const c_char, block_num: u64) -> u64;
 }
-pub fn hello_aitrans(hello: *const c_char) {
-    unsafe {
-        ChelloAitrans(hello);
-    }
-}
-use serde::{
-    Deserialize,
-    Serialize,
-};
-#[derive(Serialize, Deserialize)]
-pub struct Block {
-    id: u64,
-    deadline: u64,
-    priority: u64,
-    create_time: u64,
+pub fn select_block(blocks_str: *const c_char, block_num: u64) -> u64 {
+    unsafe { CselectBlock(blocks_str, block_num) }
 }
 
 /// Keeps track of QUIC streams and enforces stream limits.
@@ -319,35 +306,28 @@ impl StreamMap {
     pub fn peek_flushable(
         &mut self, _bandwidth: f64, _rtt: f64,
     ) -> Result<Option<u64>> {
-        // ******test*********************
-        let c_str = CString::new("hello").unwrap();
-
-        // and now you can obtain a pointer to a valid zero-terminated string
-        let c_ptr: *const c_char = c_str.as_ptr();
-
-        hello_aitrans(c_ptr);
-        // *******************************
         if !self.has_flushable() {
             Ok(None)
         } else {
-            let mut best_block_id: Option<u64> = None;
-            let mut blocks = Vec::new();
+            // let mut best_block_id: Option<u64> = None;
+            let mut blocks = String::new();
+            let mut block_num = 0;
             for i in (0..self.flushable.len()).rev() {
                 let &id = self.flushable.get(i).unwrap();
-                let block = self.get_block(id);
-                blocks.push(block);
-                if best_block_id == None ||
-                    self.is_better(best_block_id.unwrap(), id)
-                {
-                    best_block_id = Some(id);
-                }
+                let block = self.get_block_string(id);
+                blocks += &block;
+                block_num += 1;
+                // if best_block_id == None ||
+                //     self.is_better(best_block_id.unwrap(), id)
+                // {
+                //     best_block_id = Some(id);
+                // }
             }
-            let block_json_str = serde_json::to_string(&blocks).unwrap(); // todo:error(?)
-            let c_str = CString::new(block_json_str).unwrap();
+            let c_str = CString::new(blocks).unwrap();
             // obtain a pointer to a valid zero-terminated string
             let c_ptr: *const c_char = c_str.as_ptr();
-            hello_aitrans(c_ptr);
-            // info!("block_json_str: {}",block_json_str);
+            let best_block_id = Some(select_block(c_ptr, block_num));
+            // info!("best_test_id: {}",best_test_id);
             // pop(return and remove) highest_stream_id
             for i in 0..self.flushable.len() {
                 let &id = self.flushable.get(i).unwrap();
@@ -360,7 +340,7 @@ impl StreamMap {
         }
     }
 
-    pub fn get_block(&self, id: u64) -> Block {
+    pub fn get_block_string(&self, id: u64) -> String {
         let block = self.get(id).unwrap();
         let create_time = match block
             .send
@@ -371,44 +351,42 @@ impl StreamMap {
             Ok(n) => n.as_millis(),
             Err(_) => panic!("SystemTime before UNIX EPOCH!"),
         };
-        Block {
-            id,
-            deadline: block.send.deadline,
-            priority: block.send.priority,
-            create_time: create_time as u64,
-        }
+        format!(
+            "{} {} {} {} ",
+            id, block.send.deadline, block.send.priority, create_time
+        )
     }
 
-    pub fn is_better(&self, best_block_id: u64, id: u64) -> bool {
-        let best_block = self.get(best_block_id).unwrap();
-        let block = self.get(id).unwrap();
-        let best_block_create_time = best_block.send.start_time.unwrap();
-        let block_create_time = block.send.start_time.unwrap();
-        let current_time = SystemTime::now();
-        // if block has miss ddl
-        let block_passed_time =
-            match current_time.duration_since(block_create_time) {
-                Ok(n) => n.as_millis(),
-                Err(_) => panic!("SystemTime before start time!"),
-            };
-        if block_passed_time as u64 > block.send.deadline {
-            return false;
-        }
-        // if best block has miss ddl
-        let best_block_passed_time =
-            match current_time.duration_since(best_block_create_time) {
-                Ok(n) => n.as_millis(),
-                Err(_) => panic!("SystemTime before start time!"),
-            };
-        if best_block_passed_time as u64 > best_block.send.deadline {
-            return true;
-        }
-        if best_block_create_time != block_create_time {
-            return best_block_create_time > block_create_time;
-        }
-        return best_block_passed_time as u64 * best_block.send.deadline >
-            block_passed_time as u64 * block.send.deadline;
-    }
+    // pub fn is_better(&self, best_block_id: u64, id: u64) -> bool {
+    //     let best_block = self.get(best_block_id).unwrap();
+    //     let block = self.get(id).unwrap();
+    //     let best_block_create_time = best_block.send.start_time.unwrap();
+    //     let block_create_time = block.send.start_time.unwrap();
+    //     let current_time = SystemTime::now();
+    //     // if block has miss ddl
+    //     let block_passed_time =
+    //         match current_time.duration_since(block_create_time) {
+    //             Ok(n) => n.as_millis(),
+    //             Err(_) => panic!("SystemTime before start time!"),
+    //         };
+    //     if block_passed_time as u64 > block.send.deadline {
+    //         return false;
+    //     }
+    //     // if best block has miss ddl
+    //     let best_block_passed_time =
+    //         match current_time.duration_since(best_block_create_time) {
+    //             Ok(n) => n.as_millis(),
+    //             Err(_) => panic!("SystemTime before start time!"),
+    //         };
+    //     if best_block_passed_time as u64 > best_block.send.deadline {
+    //         return true;
+    //     }
+    //     if best_block_create_time != block_create_time {
+    //         return best_block_create_time > block_create_time;
+    //     }
+    //     return best_block_passed_time as u64 * best_block.send.deadline >
+    //         block_passed_time as u64 * block.send.deadline;
+    // }
 
     // /// cancel this block
     // pub fn cancel_block(&mut self, stream_id: u64) -> Result<()> {

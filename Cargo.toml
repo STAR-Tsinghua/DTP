@@ -65,8 +65,6 @@ criterion = { version = "0.3", optional = true }
 lazy_static = "1"
 rand = "0.7"
 bitflags = "1.2"
-serde_json = "1.0"
-serde = { version = "1.0", features = ["derive"] }
 
 [target."cfg(windows)".dependencies]
 winapi = { version = "0.3", features = ["wincrypt"] }
