@@ -47,10 +47,10 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 #[link(name = "aitrans")]
 extern {
-    fn CselectBlock(blocks_str: *const c_char, block_num: u64) -> u64;
+    fn CSelectBlock(blocks_str: *const c_char, block_num: u64) -> u64;
 }
 pub fn select_block(blocks_str: *const c_char, block_num: u64) -> u64 {
-    unsafe { CselectBlock(blocks_str, block_num) }
+    unsafe { CSelectBlock(blocks_str, block_num) }
 }
 
 /// Keeps track of QUIC streams and enforces stream limits.
