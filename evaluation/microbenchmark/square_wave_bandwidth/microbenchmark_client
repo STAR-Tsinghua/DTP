@@ -1,4 +1,0 @@
-config/config-QUIC.txt   result/client_log/QUIC-client-square-wave.log
-config/config-Deadline.txt   result/client_log/Deadline-client-square-wave.log
-config/config-Priority.txt   result/client_log/Priority-client-square-wave.log
-config/config-DTP.txt   result/client_log/DTP-client-square-wave.log

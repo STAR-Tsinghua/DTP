@@ -1,4 +1,0 @@
-result/data/QUIC/QUIC-rtt-square-wave.log  result/server_log/QUIC-server-rtt-square-wave.log
-result/data/Deadline/Deadline-rtt-square-wave.log  result/server_log/Deadline-server-rtt-square-wave.log
-result/data/Priority/Priority-rtt-square-wave.log  result/server_log/Priority-server-rtt-square-wave.log
-result/data/DTP/DTP-rtt-square-wave.log  result/server_log/DTP-server-rtt-square-wave.log
