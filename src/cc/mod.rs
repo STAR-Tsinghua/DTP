@@ -50,9 +50,11 @@ pub const LOSS_REDUCTION_FACTOR: f64 = 0.5;
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Algorithm {
     /// Reno congestion control algorithm (default). `reno` in a string form.
-    Reno = 0,
+    Reno      = 0,
     /// BBR congestion control algorithm
-    BBR  = 1,
+    BBR       = 1,
+    /// cc_trigger in Aitrans solution
+    CcTrigger = 2,
 }
 
 impl FromStr for Algorithm {
@@ -65,6 +67,7 @@ impl FromStr for Algorithm {
         match name {
             "reno" => Ok(Algorithm::Reno),
             "bbr" => Ok(Algorithm::BBR),
+            "cc_trigger" => Ok(Algorithm::CcTrigger),
             _ => Err(crate::Error::CongestionControl),
         }
     }
@@ -133,6 +136,7 @@ pub fn new_congestion_control(algo: Algorithm) -> Box<dyn CongestionControl> {
     match algo {
         Algorithm::Reno => Box::new(cc::reno::Reno::new()),
         Algorithm::BBR => Box::new(cc::bbr::BBR::default()),
+        Algorithm::CcTrigger => Box::new(cc::cc_trigger::CCTrigger::new()),
     }
 }
 
@@ -165,4 +169,5 @@ mod tests {
 }
 
 mod bbr;
+mod cc_trigger;
 mod reno;
