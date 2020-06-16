@@ -30,10 +30,14 @@ use std::time::Instant;
 use crate::cc;
 // use crate::packet;
 use crate::recovery::Sent;
+use crate::stream::cc_trigger;
+
+use std::ffi::CString;
+use std::os::raw::c_char;
 
 /// cc trigger of aitrans implementation.
 pub struct CCTrigger {
-    congestion_window: usize,
+    congestion_window: u64,
 
     bytes_in_flight: usize,
 
@@ -50,7 +54,7 @@ impl cc::CongestionControl for CCTrigger {
         Self: Sized,
     {
         CCTrigger {
-            congestion_window: cc::INITIAL_WINDOW,
+            congestion_window: cc::INITIAL_WINDOW as u64,
 
             bytes_in_flight: 0,
 
@@ -63,11 +67,11 @@ impl cc::CongestionControl for CCTrigger {
     }
 
     fn cwnd(&self) -> usize {
-        self.congestion_window
+        self.congestion_window as usize
     }
 
     fn collapse_cwnd(&mut self) {
-        self.congestion_window = cc::MINIMUM_WINDOW;
+        self.congestion_window = cc::MINIMUM_WINDOW as u64;
     }
 
     fn bytes_in_flight(&self) -> usize {
@@ -91,43 +95,22 @@ impl cc::CongestionControl for CCTrigger {
 
     fn on_packet_acked_cc(
         &mut self, packet: &Sent, _srtt: Duration, _min_rtt: Duration,
-        app_limited: bool, _trace_id: &str,
+        _app_limited: bool, _trace_id: &str,
     ) {
         self.bytes_in_flight -= packet.size;
-
-        if self.in_congestion_recovery(packet.time) {
-            return;
-        }
-
-        if app_limited {
-            return;
-        }
-
-        if self.congestion_window < self.ssthresh {
-            // Slow start.
-            self.congestion_window += packet.size;
-        } else {
-            // Congestion avoidance.
-            self.congestion_window +=
-                (cc::MAX_DATAGRAM_SIZE * packet.size) / self.congestion_window;
-        }
+        let c_str = CString::new("EVENT_TYPE_FINISHED").unwrap();
+        // obtain a pointer to a valid zero-terminated string
+        let c_ptr: *const c_char = c_str.as_ptr();
+        self.congestion_window = cc_trigger(c_ptr, self.congestion_window);
     }
 
     fn congestion_event(
-        &mut self, time_sent: Instant, now: Instant, _trace_id: &str,
+        &mut self, _time_sent: Instant, _now: Instant, _trace_id: &str,
     ) {
-        // Start a new congestion event if packet was sent after the
-        // start of the previous congestion recovery period.
-        if !self.in_congestion_recovery(time_sent) {
-            self.congestion_recovery_start_time = Some(now);
-
-            self.congestion_window = (self.congestion_window as f64 *
-                cc::LOSS_REDUCTION_FACTOR)
-                as usize;
-            self.congestion_window =
-                std::cmp::max(self.congestion_window, cc::MINIMUM_WINDOW);
-            self.ssthresh = self.congestion_window;
-        }
+        let c_str = CString::new("EVENT_TYPE_DROP").unwrap();
+        // obtain a pointer to a valid zero-terminated string
+        let c_ptr: *const c_char = c_str.as_ptr();
+        self.congestion_window = cc_trigger(c_ptr, self.congestion_window);
     }
 
     // unused
