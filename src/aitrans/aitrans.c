@@ -3,10 +3,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-uint64_t SolutionSelectPacket(struct Blocks blocks, uint64_t current_time) {
-  fprintf(stderr, "current time = %ld \n", current_time);
-  return blocks.blocks_id[0];
-}
+// uint64_t SolutionSelectPacket(struct Blocks blocks, uint64_t current_time) {
+//   fprintf(stderr, "current time = %ld \n", current_time);
+//   return blocks.blocks_id[0];
+// }
 
 uint64_t CSelectBlock(char *blocks_string, uint64_t block_num,
                       uint64_t current_time) {
@@ -28,14 +28,14 @@ uint64_t CSelectBlock(char *blocks_string, uint64_t block_num,
   /*********** Player's Code End*************/
 }
 
-uint64_t SolutionCcTrigger(char *event_type, uint64_t cwnd) {
-  uint64_t new_cwnd;
-  if (event_type[11] == 'F')
-    new_cwnd = cwnd + 1500; // EVENT_TYPE_FINISHED
-  if (event_type[11] == 'D')
-    new_cwnd = cwnd / 2; // EVENT_TYPE_DROP
-  return new_cwnd;
-}
+// uint64_t SolutionCcTrigger(char *event_type, uint64_t cwnd) {
+//   uint64_t new_cwnd;
+//   if (event_type[11] == 'F')
+//     new_cwnd = cwnd + 1500; // EVENT_TYPE_FINISHED
+//   if (event_type[11] == 'D')
+//     new_cwnd = cwnd / 2; // EVENT_TYPE_DROP
+//   return new_cwnd;
+// }
 
 uint64_t Ccc_trigger(char *event_type, uint64_t cwnd) {
   fprintf(stderr, "event_type=%s\n", event_type);
