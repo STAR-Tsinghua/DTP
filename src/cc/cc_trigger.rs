@@ -42,10 +42,6 @@ pub struct CCTrigger {
     bytes_in_flight: usize,
 
     congestion_recovery_start_time: Option<Instant>,
-
-    ssthresh: usize,
-    /* TODO: ECN is not implemented.
-     * ecn_ce_counters: [usize; packet::EPOCH_COUNT] */
 }
 
 impl cc::CongestionControl for CCTrigger {
@@ -59,10 +55,6 @@ impl cc::CongestionControl for CCTrigger {
             bytes_in_flight: 0,
 
             congestion_recovery_start_time: None,
-
-            ssthresh: std::usize::MAX,
-            /* TODO: ECN is not implemented.
-             * ecn_ce_counters: [0; packet::EPOCH_COUNT], */
         }
     }
 
@@ -131,8 +123,8 @@ impl std::fmt::Debug for CCTrigger {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            "cwnd={} ssthresh={} bytes_in_flight={}",
-            self.congestion_window, self.ssthresh, self.bytes_in_flight,
+            "cwnd={} bytes_in_flight={}",
+            self.congestion_window, self.bytes_in_flight,
         )
     }
 }

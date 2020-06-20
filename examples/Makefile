@@ -1,6 +1,8 @@
 OS := $(shell uname)
 
 SOURCE_DIR = ../src
+AITRANS_DIR = ../src/aitrans
+AITRANS_LIB_DIR = ../src/aitrans/include
 BUILD_DIR = $(CURDIR)/build
 LIB_DIR = $(BUILD_DIR)/debug
 INCLUDE_DIR = ../include
@@ -36,7 +38,7 @@ http3-client: http3-client.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 http3-server: http3-server.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
 
-$(LIB_DIR)/libquiche.a: $(shell find $(SOURCE_DIR) -type f -name '*.rs')
+$(LIB_DIR)/libquiche.a: $(shell find $(SOURCE_DIR) -type f -name '*.rs') $(AITRANS_DIR)/aitrans.c $(AITRANS_DIR)/solution.c $(AITRANS_LIB_DIR)/aitrans.h
 	cd .. && cargo build --target-dir $(BUILD_DIR)
 
 clean:
