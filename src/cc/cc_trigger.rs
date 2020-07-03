@@ -168,42 +168,6 @@ mod tests {
     }
 
     #[test]
-    fn cc_trigger_slow_start() {
-        init();
-
-        let mut cc = cc::new_congestion_control(cc::Algorithm::CcTrigger);
-
-        let p = Sent {
-            pkt_num: 0,
-            frames: vec![],
-            time: std::time::Instant::now(),
-            size: 5000,
-            ack_eliciting: true,
-            in_flight: true,
-        };
-
-        // Send 5k x 4 = 20k, higher than default cwnd(~15k)
-        // to become no longer app limited.
-        cc.on_packet_sent_cc(&p, p.size, TRACE_ID);
-        cc.on_packet_sent_cc(&p, p.size, TRACE_ID);
-        cc.on_packet_sent_cc(&p, p.size, TRACE_ID);
-        cc.on_packet_sent_cc(&p, p.size, TRACE_ID);
-
-        let cwnd_prev = cc.cwnd();
-
-        cc.on_packet_acked_cc(
-            &p,
-            Duration::new(0, 1),
-            Duration::new(0, 1),
-            false,
-            TRACE_ID,
-        );
-
-        // Check if cwnd increased by packet size (slow start).
-        assert_eq!(cc.cwnd(), cwnd_prev + p.size);
-    }
-
-    #[test]
     fn cc_trigger_congestion_event() {
         init();
 
@@ -218,58 +182,6 @@ mod tests {
 
         // In Reno, after congestion event, cwnd will be cut in half.
         assert_eq!(prev_cwnd / 2, cc.cwnd());
-    }
-
-    #[test]
-    fn cc_trigger_congestion_avoidance() {
-        init();
-
-        let mut cc = cc::new_congestion_control(cc::Algorithm::CcTrigger);
-        let prev_cwnd = cc.cwnd();
-
-        // Send 20K bytes.
-        let p = Sent {
-            pkt_num: 0,
-            frames: vec![],
-            time: std::time::Instant::now(),
-            size: 20000,
-            ack_eliciting: true,
-            in_flight: true,
-        };
-        cc.on_packet_sent_cc(&p, 20000, TRACE_ID);
-
-        cc.congestion_event(
-            std::time::Instant::now(),
-            std::time::Instant::now(),
-            TRACE_ID,
-        );
-
-        // In Reno, after congestion event, cwnd will be cut in half.
-        assert_eq!(prev_cwnd / 2, cc.cwnd());
-
-        let p = Sent {
-            pkt_num: 0,
-            frames: vec![],
-            time: std::time::Instant::now(),
-            size: 5000,
-            ack_eliciting: true,
-            in_flight: true,
-        };
-
-        let prev_cwnd = cc.cwnd();
-
-        // Ack 5000 bytes.
-        cc.on_packet_acked_cc(
-            &p,
-            Duration::new(0, 1),
-            Duration::new(0, 1),
-            false,
-            TRACE_ID,
-        );
-
-        // Check if cwnd increase is smaller than a packet size (congestion
-        // avoidance).
-        assert!(cc.cwnd() < prev_cwnd + 1111);
     }
 
     #[test]

@@ -20,6 +20,7 @@ LIBSSL_DIR = $(dir $(shell find ${BUILD_DIR} -name libssl.a))
 LDFLAGS = -L$(LIBCRYPTO_DIR) -L$(LIBSSL_DIR) -L$(LIB_DIR)
 
 LIBS = $(LIB_DIR)/libquiche.a -lev -ldl -pthread -lm
+CPPFLAGS =  -lstdc++
 
 all: client client_trace server http3-client http3-server
 
@@ -30,7 +31,7 @@ client_trace: client_trace.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
 
 server: server.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
-	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS) $(CPPFLAGS)
 
 http3-client: http3-client.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
@@ -38,7 +39,7 @@ http3-client: http3-client.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 http3-server: http3-server.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
 
-$(LIB_DIR)/libquiche.a: $(shell find $(SOURCE_DIR) -type f -name '*.rs') $(AITRANS_DIR)/aitrans.c $(AITRANS_DIR)/solution.c $(AITRANS_LIB_DIR)/aitrans.h
+$(LIB_DIR)/libquiche.a: $(shell find $(SOURCE_DIR) -type f -name '*.rs') $(AITRANS_DIR)/aitrans.cxx $(AITRANS_DIR)/solution.cxx $(AITRANS_LIB_DIR)/aitrans.hxx
 	cd .. && cargo build --target-dir $(BUILD_DIR)
 
 clean:

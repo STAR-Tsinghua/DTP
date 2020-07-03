@@ -206,8 +206,9 @@ fn main() {
     }
 
     cc::Build::new()
-        .file("src/aitrans/aitrans.c")
-        .file("src/aitrans/solution.c")
+        .file("src/aitrans/aitrans.cxx")
+        .file("src/aitrans/solution.cxx")
         .include("src/aitrans/include/")
+        .cpp(true)
         .compile("aitrans");
 }

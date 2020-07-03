@@ -48,6 +48,13 @@
 
 #define MAX_DATAGRAM_SIZE 1350
 
+#define MAX_BLOCK_SIZE 1000000  // 1Mbytes
+
+int MAX_SEND_TIMES;
+char *dtp_cfg_fname;
+int cfgs_len;
+struct dtp_config *cfgs = NULL;
+
 #define MAX_TOKEN_LEN                                        \
     sizeof("quiche") - 1 + sizeof(struct sockaddr_storage) + \
         QUICHE_MAX_CONN_ID_LEN
@@ -60,6 +67,10 @@ struct connections {
 
 struct conn_io {
     ev_timer timer;
+    ev_timer sender;
+    int send_round;
+    int configs_len;
+    dtp_config *configs;
 
     int sock;
 
@@ -186,7 +197,50 @@ static bool validate_token(const uint8_t *token, size_t token_len,
     return true;
 }
 
-static struct conn_io *create_conn(uint8_t *odcid, size_t odcid_len) {
+static void sender_cb(EV_P_ ev_timer *w, int revents) {
+    struct conn_io *conn_io = w->data;
+
+    if (quiche_conn_is_established(conn_io->conn)) {
+        int deadline = 0;
+        int priority = 0;
+        int block_size = 0;
+        int depend_id = 0;
+        int stream_id = 0;
+        static uint8_t buf[MAX_BLOCK_SIZE];
+
+        for (int i = 0; i < conn_io->configs_len; i++) {
+            deadline = conn_io->configs[i].deadline;
+            priority = conn_io->configs[i].priority;
+            block_size = conn_io->configs[i].block_size;
+            stream_id = 4 * (conn_io->send_round + 1) + 1;
+            // if ((stream_id + 1) % 8 == 0)
+            //     depend_id = stream_id - 4;
+            // else
+            // depend_id = stream_id;
+            depend_id = stream_id;
+            if (block_size > MAX_BLOCK_SIZE) block_size = MAX_BLOCK_SIZE;
+
+            if (quiche_conn_stream_send_full(conn_io->conn, stream_id, buf,
+                                             block_size, true, deadline,
+                                             priority, depend_id) < 0) {
+                fprintf(stderr, "failed to send data round %d\n",
+                        conn_io->send_round);
+            } else {
+                fprintf(stderr, "send round %d\n", conn_io->send_round);
+            }
+
+            conn_io->send_round++;
+            if (conn_io->send_round >= MAX_SEND_TIMES) {
+                ev_timer_stop(loop, &conn_io->sender);
+                break;
+            }
+        }
+    }
+    flush_egress(loop, conn_io);
+}
+
+static struct conn_io *create_conn(struct ev_loop *loop, uint8_t *odcid,
+                                   size_t odcid_len) {
     struct conn_io *conn_io = malloc(sizeof(*conn_io));
     if (conn_io == NULL) {
         fprintf(stderr, "failed to allocate connection IO\n");
@@ -214,9 +268,27 @@ static struct conn_io *create_conn(uint8_t *odcid, size_t odcid_len) {
 
     conn_io->sock = conns->sock;
     conn_io->conn = conn;
+
+    conn_io->send_round = 0;
+
+    cfgs = parse_dtp_config(dtp_cfg_fname, &cfgs_len, &MAX_SEND_TIMES);
+    if (cfgs_len <= 0) {
+        fprintf(stderr, "No valid DTP configuration\n");
+    } else {
+        conn_io->configs_len = cfgs_len;
+        conn_io->configs = cfgs;
+    }
+    conn_io->configs_len = cfgs_len;
+    conn_io->configs = cfgs;
+
     conn_io->t_last = getCurrentUsec();
     conn_io->can_send = 1350;
     conn_io->done_writing = false;
+
+    // start sending immediately and repeat every 100ms.
+    ev_timer_init(&conn_io->sender, sender_cb, 0., 0.1);
+    ev_timer_start(loop, &conn_io->sender);
+    conn_io->sender.data = conn_io;
 
     ev_init(&conn_io->timer, timeout_cb);
     conn_io->timer.data = conn_io;
@@ -234,7 +306,7 @@ static struct conn_io *create_conn(uint8_t *odcid, size_t odcid_len) {
 static void recv_cb(EV_P_ ev_io *w, int revents) {
     struct conn_io *tmp, *conn_io = NULL;
 
-    static uint8_t buf[65535];
+    static uint8_t buf[MAX_BLOCK_SIZE];
     static uint8_t out[MAX_DATAGRAM_SIZE];
 
     uint8_t i = 3;
@@ -303,7 +375,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                     return;
                 }
 
-                // fprintf(stderr, "sent %zd bytes\n", sent);
+                fprintf(stderr, "sent %zd bytes\n", sent);
                 return;
             }
 
@@ -331,7 +403,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                     return;
                 }
 
-                // fprintf(stderr, "sent %zd bytes\n", sent);
+                fprintf(stderr, "sent %zd bytes\n", sent);
                 return;
             }
 
@@ -341,7 +413,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                 return;
             }
 
-            conn_io = create_conn(odcid, odcid_len);
+            conn_io = create_conn(loop, odcid, odcid_len);
             if (conn_io == NULL) {
                 return;
             }
@@ -362,7 +434,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
             return;
         }
 
-        // fprintf(stderr, "recv %zd bytes\n", done);
+        fprintf(stderr, "recv %zd bytes\n", done);
 
         if (quiche_conn_is_established(conn_io->conn)) {
             uint64_t s = 0;
@@ -377,25 +449,6 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                     conn_io->conn, s, buf, sizeof(buf), &fin);
                 if (recv_len < 0) {
                     break;
-                }
-
-                if (fin) {
-                    // output block_size,block_priority,block_deadline
-                    uint64_t block_size, block_priority, block_deadline;
-                    int64_t bct = quiche_conn_get_bct(conn_io->conn, s);
-                    uint64_t goodbytes =
-                        quiche_conn_get_good_recv(conn_io->conn, s);
-                    quiche_conn_get_block_info(conn_io->conn, s, &block_size,
-                                               &block_priority,
-                                               &block_deadline);
-                    fprintf(stdout, "%2ld %14ld %4ld %9ld %5ld %9ld\n", s,
-                            goodbytes, bct, block_size, block_priority,
-                            block_deadline);
-                    // fflush(stdout);
-                    // static const char *resp = "byez\n";
-                    // quiche_conn_stream_send(conn_io->conn, s, (uint8_t
-                    // *)resp,
-                    //                         5, true);
                 }
             }
 
@@ -418,6 +471,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
             HASH_DELETE(hh, conns->h, conn_io);
 
             ev_timer_stop(loop, &conn_io->timer);
+            ev_timer_stop(loop, &conn_io->sender);
             quiche_conn_free(conn_io->conn);
             free(conn_io);
         }
@@ -441,11 +495,12 @@ static void timeout_cb(EV_P_ ev_timer *w, int revents) {
                 "ns cwnd=%zu\n",
                 stats.recv, stats.sent, stats.lost, stats.rtt, stats.cwnd);
 
-        fflush(stdout);
+        // fflush(stdout);
 
         HASH_DELETE(hh, conns->h, conn_io);
 
         ev_timer_stop(loop, &conn_io->timer);
+        ev_timer_stop(loop, &conn_io->sender);
         quiche_conn_free(conn_io->conn);
         free(conn_io);
 
@@ -456,6 +511,13 @@ static void timeout_cb(EV_P_ ev_timer *w, int revents) {
 int main(int argc, char *argv[]) {
     const char *host = argv[1];
     const char *port = argv[2];
+    dtp_cfg_fname = argv[3];
+
+    cfgs = parse_dtp_config(dtp_cfg_fname, &cfgs_len, &MAX_SEND_TIMES);
+    if (cfgs_len <= 0) {
+        fprintf(stderr, "No valid DTP configuration\n");
+        return -1;
+    }
 
     const struct addrinfo hints = {.ai_family = PF_UNSPEC,
                                    .ai_socktype = SOCK_DGRAM,
@@ -503,7 +565,7 @@ int main(int argc, char *argv[]) {
     quiche_config_set_initial_max_stream_data_bidi_local(config, 1000000000);
     quiche_config_set_initial_max_stream_data_bidi_remote(config, 1000000000);
     quiche_config_set_initial_max_streams_bidi(config, 10000);
-    quiche_config_set_cc_algorithm(config, QUICHE_CC_RENO);
+    quiche_config_set_cc_algorithm(config, Aitrans_CC_TRIGGER);
 
     struct connections c;
     c.sock = sock;
@@ -512,8 +574,6 @@ int main(int argc, char *argv[]) {
     conns = &c;
 
     ev_io watcher;
-
-    fprintf(stdout, "StreamID goodbytes bct BlockSize Priority Deadline\n");
 
     struct ev_loop *loop = ev_default_loop(0);
 
