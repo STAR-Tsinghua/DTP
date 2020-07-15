@@ -57,10 +57,14 @@ pub fn select_block(
     unsafe { CSelectBlock(blocks_str, block_num, current_time) }
 }
 extern {
-    fn Ccc_trigger(event_type: *const c_char, cwnd: u64) -> u64;
+    fn Ccc_trigger(
+        event_type: *const c_char, rtt: u64, bytes_in_flight: u64, cwnd: u64,
+    ) -> u64;
 }
-pub fn cc_trigger(event_type: *const c_char, cwnd: u64) -> u64 {
-    unsafe { Ccc_trigger(event_type, cwnd) }
+pub fn cc_trigger(
+    event_type: *const c_char, rtt: u64, bytes_in_flight: u64, cwnd: u64,
+) -> u64 {
+    unsafe { Ccc_trigger(event_type, rtt, bytes_in_flight, cwnd) }
 }
 
 /// Keeps track of QUIC streams and enforces stream limits.

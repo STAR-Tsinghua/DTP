@@ -93,7 +93,13 @@ impl cc::CongestionControl for CCTrigger {
         let c_str = CString::new("EVENT_TYPE_FINISHED").unwrap();
         // obtain a pointer to a valid zero-terminated string
         let c_ptr: *const c_char = c_str.as_ptr();
-        self.congestion_window = cc_trigger(c_ptr, self.congestion_window);
+        let rtt = 0;
+        self.congestion_window = cc_trigger(
+            c_ptr,
+            rtt,
+            self.bytes_in_flight as u64,
+            self.congestion_window,
+        );
     }
 
     fn congestion_event(
@@ -102,7 +108,13 @@ impl cc::CongestionControl for CCTrigger {
         let c_str = CString::new("EVENT_TYPE_DROP").unwrap();
         // obtain a pointer to a valid zero-terminated string
         let c_ptr: *const c_char = c_str.as_ptr();
-        self.congestion_window = cc_trigger(c_ptr, self.congestion_window);
+        let rtt = 0;
+        self.congestion_window = cc_trigger(
+            c_ptr,
+            rtt,
+            self.bytes_in_flight as u64,
+            self.congestion_window,
+        );
     }
 
     // unused

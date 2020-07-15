@@ -18,8 +18,9 @@ uint64_t SolutionSelectPacket(struct Blocks blocks, uint64_t current_time) {
     /************** END CODE HERE ***************/
 }
 
-uint64_t SolutionCcTrigger(char *event_type, uint64_t cwnd) {
+uint64_t SolutionCcTrigger(char *event_type, uint64_t rtt, uint64_t bytes_in_flight, uint64_t cwnd) {
     /************** START CODE HERE ***************/
+    fprintf(stderr, "rtt: %lu, bytes_in_flight: %lu\n", rtt, bytes_in_flight);
     const uint64_t max_packet_size = 1350;
     const uint64_t init_ssthresh = 2 * max_packet_size;
     if (your_parameter.count("ssthresh") <= 0)
