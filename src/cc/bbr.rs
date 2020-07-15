@@ -2558,7 +2558,8 @@ impl cc::CongestionControl for BBR {
     }
 
     fn congestion_event(
-        &mut self, _time_sent: Instant, _now: Instant, _trace_id: &str,
+        &mut self, _srtt: Duration, _time_sent: Instant, _now: Instant,
+        _trace_id: &str,
     ) {
         // Start a new congestion event if packet was sent after the
         // start of the previous congestion recovery period.

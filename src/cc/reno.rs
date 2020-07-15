@@ -114,7 +114,8 @@ impl cc::CongestionControl for Reno {
     }
 
     fn congestion_event(
-        &mut self, time_sent: Instant, now: Instant, _trace_id: &str,
+        &mut self, _srtt: Duration, time_sent: Instant, now: Instant,
+        _trace_id: &str,
     ) {
         // Start a new congestion event if packet was sent after the
         // start of the previous congestion recovery period.
@@ -236,6 +237,7 @@ mod tests {
         let prev_cwnd = cc.cwnd();
 
         cc.congestion_event(
+            Duration::from_millis(0),
             std::time::Instant::now(),
             std::time::Instant::now(),
             TRACE_ID,
@@ -264,6 +266,7 @@ mod tests {
         cc.on_packet_sent_cc(&p, 20000, TRACE_ID);
 
         cc.congestion_event(
+            Duration::from_millis(0),
             std::time::Instant::now(),
             std::time::Instant::now(),
             TRACE_ID,

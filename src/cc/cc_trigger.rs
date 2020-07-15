@@ -86,32 +86,31 @@ impl cc::CongestionControl for CCTrigger {
     }
 
     fn on_packet_acked_cc(
-        &mut self, packet: &Sent, _srtt: Duration, _min_rtt: Duration,
+        &mut self, packet: &Sent, srtt: Duration, _min_rtt: Duration,
         _app_limited: bool, _trace_id: &str,
     ) {
         self.bytes_in_flight -= packet.size;
         let c_str = CString::new("EVENT_TYPE_FINISHED").unwrap();
         // obtain a pointer to a valid zero-terminated string
         let c_ptr: *const c_char = c_str.as_ptr();
-        let rtt = 0;
         self.congestion_window = cc_trigger(
             c_ptr,
-            rtt,
+            srtt.as_millis() as u64,
             self.bytes_in_flight as u64,
             self.congestion_window,
         );
     }
 
     fn congestion_event(
-        &mut self, _time_sent: Instant, _now: Instant, _trace_id: &str,
+        &mut self, srtt: Duration, _time_sent: Instant, _now: Instant,
+        _trace_id: &str,
     ) {
         let c_str = CString::new("EVENT_TYPE_DROP").unwrap();
         // obtain a pointer to a valid zero-terminated string
         let c_ptr: *const c_char = c_str.as_ptr();
-        let rtt = 0;
         self.congestion_window = cc_trigger(
             c_ptr,
-            rtt,
+            srtt.as_millis() as u64,
             self.bytes_in_flight as u64,
             self.congestion_window,
         );
@@ -187,6 +186,7 @@ mod tests {
         let prev_cwnd = cc.cwnd();
 
         cc.congestion_event(
+            std::time::Duration::from_millis(0),
             std::time::Instant::now(),
             std::time::Instant::now(),
             TRACE_ID,

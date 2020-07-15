@@ -116,7 +116,8 @@ where
 
     /// CongestionEvent(time_sent)
     fn congestion_event(
-        &mut self, time_sent: Instant, now: Instant, trace_id: &str,
+        &mut self, srtt: Duration, time_sent: Instant, now: Instant,
+        trace_id: &str,
     );
 
     /// bbr function

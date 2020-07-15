@@ -566,8 +566,12 @@ impl Recovery {
 
         if let Some(largest_lost_pkt) = largest_lost_pkt {
             // CongestionEvent
-            self.cc
-                .congestion_event(largest_lost_pkt.time, now, trace_id);
+            self.cc.congestion_event(
+                self.rtt(),
+                largest_lost_pkt.time,
+                now,
+                trace_id,
+            );
 
             if self.in_persistent_congestion(&largest_lost_pkt) {
                 self.cc.collapse_cwnd();
