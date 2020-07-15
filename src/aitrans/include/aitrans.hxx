@@ -10,7 +10,7 @@ static map<string, uint64_t> your_parameter;
 extern "C" {
     struct Blocks {
         uint64_t *blocks_id, *blocks_deadline, *blocks_priority,
-            *blocks_create_time;
+            *blocks_create_time, *block_size;
         uint64_t block_num;
     };
     uint64_t SolutionSelectPacket(struct Blocks blocks, uint64_t current_time);

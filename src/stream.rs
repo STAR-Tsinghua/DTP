@@ -367,8 +367,12 @@ impl StreamMap {
             Err(_) => panic!("SystemTime before UNIX EPOCH!"),
         };
         format!(
-            "{} {} {} {} ",
-            id, block.send.deadline, block.send.priority, create_time
+            "{} {} {} {} {} ",
+            id,
+            block.send.deadline,
+            block.send.priority,
+            create_time,
+            block.send.block_size()
         )
     }
 
