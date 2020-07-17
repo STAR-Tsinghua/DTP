@@ -45,7 +45,7 @@ pub const DEFAULT_PRIORITY: u64 = 9999999;
 
 use std::ffi::CString;
 use std::os::raw::c_char;
-#[link(name = "aitrans")]
+
 extern {
     fn CSelectBlock(
         blocks_str: *const c_char, block_num: u64, current_time: u64,

@@ -13,6 +13,7 @@ extern "C" {
             *blocks_create_time, *block_size;
         uint64_t block_num;
     };
+    void SolutionInit();
     uint64_t SolutionSelectPacket(struct Blocks blocks, uint64_t current_time);
     uint64_t CSelectBlock(char *blocks_string, uint64_t block_num,
                         uint64_t current_time);

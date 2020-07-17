@@ -271,6 +271,10 @@ use std::time;
 use std::pin::Pin;
 use std::str::FromStr;
 
+extern {
+    fn SolutionInit();
+}
+
 pub use crate::cc::Algorithm as CongestionControlAlgorithm;
 
 /// The current QUIC wire version.
@@ -681,6 +685,9 @@ impl Config {
     /// ```
     pub fn set_cc_algorithm_name(&mut self, name: &str) -> Result<()> {
         self.cc_algorithm = CongestionControlAlgorithm::from_str(name)?;
+        if self.cc_algorithm == cc::Algorithm::CcTrigger {
+            unsafe { SolutionInit() };
+        }
 
         Ok(())
     }
@@ -690,6 +697,9 @@ impl Config {
     /// The default value is `quiche::CongestionControlAlgorithm::Reno`.
     pub fn set_cc_algorithm(&mut self, algo: CongestionControlAlgorithm) {
         self.cc_algorithm = algo;
+        if self.cc_algorithm == cc::Algorithm::CcTrigger {
+            unsafe { SolutionInit() };
+        }
     }
 }
 

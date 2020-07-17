@@ -2,8 +2,7 @@
 
 uint64_t CSelectBlock(char *blocks_string, uint64_t block_num,
                       uint64_t current_time) {
-    // fprintf(stderr, "%s\n", blocks_string);
-    cout << "blocks_string:" << blocks_string << "\n";
+    fprintf(stderr, "blocks_string: %s\n", blocks_string);
     struct Blocks blocks;
     blocks.block_num = block_num;
     blocks.blocks_id = (uint64_t *)malloc(block_num * sizeof(uint64_t));
