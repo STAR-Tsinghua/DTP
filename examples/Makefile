@@ -30,7 +30,7 @@ client: client.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 client_trace: client_trace.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
 
-server: server.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
+server: server.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a dtp_config.h
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS) $(CPPFLAGS)
 
 http3-client: http3-client.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a

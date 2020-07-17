@@ -16,6 +16,7 @@ struct dtp_config {
     int deadline;   // ms
     int priority;   //
     int block_size; // byte
+    float send_time_gap;//s
 };
 
 typedef struct dtp_config dtp_config;
@@ -24,16 +25,17 @@ typedef struct dtp_config dtp_config;
 
 // return: config array
 // number: return the number of parsed dtp_config (MAX=10).
-struct dtp_config* parse_dtp_config(const char *filename, int *number,int *MAX_SEND_TIMES)
+struct dtp_config* parse_dtp_config(const char *filename, int *number)
 {
     FILE *fd = NULL;
 
+    float send_time_gap;
     int deadline;
     int priority;
     int block_size;
 
     int cfgs_len = 0;
-    static int max_cfgs_len = 1000;
+    static int max_cfgs_len = 10000;
     dtp_config *cfgs = malloc(sizeof(*cfgs) * max_cfgs_len);
 
 
@@ -44,11 +46,11 @@ struct dtp_config* parse_dtp_config(const char *filename, int *number,int *MAX_S
         return NULL;
     }
 
-    fscanf(fd,"%d",MAX_SEND_TIMES);
-    while (fscanf(fd, "%d %d %d", &deadline, &priority, &block_size) == 3) {
+    while (fscanf(fd, "%f %d %d %d", &send_time_gap, &deadline, &block_size, &priority) == 4) {
+        cfgs[cfgs_len].send_time_gap = send_time_gap;
         cfgs[cfgs_len].deadline = deadline;
-        cfgs[cfgs_len].priority = priority;
         cfgs[cfgs_len].block_size = block_size;
+        cfgs[cfgs_len].priority = priority;
 
         cfgs_len ++;
     }

@@ -50,7 +50,6 @@
 
 #define MAX_BLOCK_SIZE 1000000  // 1Mbytes
 
-int MAX_SEND_TIMES;
 char *dtp_cfg_fname;
 int cfgs_len;
 struct dtp_config *cfgs = NULL;
@@ -206,9 +205,11 @@ static void sender_cb(EV_P_ ev_timer *w, int revents) {
         int block_size = 0;
         int depend_id = 0;
         int stream_id = 0;
+        float send_time_gap = 0.0;
         static uint8_t buf[MAX_BLOCK_SIZE];
 
-        for (int i = 0; i < conn_io->configs_len; i++) {
+        for (int i = conn_io->send_round; i < conn_io->configs_len; i++) {
+            send_time_gap = conn_io->configs[i].send_time_gap;
             deadline = conn_io->configs[i].deadline;
             priority = conn_io->configs[i].priority;
             block_size = conn_io->configs[i].block_size;
@@ -230,10 +231,14 @@ static void sender_cb(EV_P_ ev_timer *w, int revents) {
             }
 
             conn_io->send_round++;
-            if (conn_io->send_round >= MAX_SEND_TIMES) {
+            conn_io->sender.repeat = send_time_gap;
+            ev_timer_again(loop, &conn_io->sender);
+            fprintf(stderr,"time gap: %f\n",send_time_gap);
+            if (conn_io->send_round >= conn_io->configs_len) {
                 ev_timer_stop(loop, &conn_io->sender);
                 break;
             }
+            break;//每次只发一个block
         }
     }
     flush_egress(loop, conn_io);
@@ -271,7 +276,7 @@ static struct conn_io *create_conn(struct ev_loop *loop, uint8_t *odcid,
 
     conn_io->send_round = 0;
 
-    cfgs = parse_dtp_config(dtp_cfg_fname, &cfgs_len, &MAX_SEND_TIMES);
+    cfgs = parse_dtp_config(dtp_cfg_fname, &cfgs_len);
     if (cfgs_len <= 0) {
         fprintf(stderr, "No valid DTP configuration\n");
     } else {
@@ -286,7 +291,7 @@ static struct conn_io *create_conn(struct ev_loop *loop, uint8_t *odcid,
     conn_io->done_writing = false;
 
     // start sending immediately and repeat every 100ms.
-    ev_timer_init(&conn_io->sender, sender_cb, 0., 0.1);
+    ev_timer_init(&conn_io->sender, sender_cb, cfgs[0].send_time_gap, 9999.0);
     ev_timer_start(loop, &conn_io->sender);
     conn_io->sender.data = conn_io;
 
@@ -513,11 +518,6 @@ int main(int argc, char *argv[]) {
     const char *port = argv[2];
     dtp_cfg_fname = argv[3];
 
-    cfgs = parse_dtp_config(dtp_cfg_fname, &cfgs_len, &MAX_SEND_TIMES);
-    if (cfgs_len <= 0) {
-        fprintf(stderr, "No valid DTP configuration\n");
-        return -1;
-    }
 
     const struct addrinfo hints = {.ai_family = PF_UNSPEC,
                                    .ai_socktype = SOCK_DGRAM,
