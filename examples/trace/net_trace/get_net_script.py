@@ -12,7 +12,7 @@ with open(script_file, 'w') as script_f:
             delay = float(strs[3])*1000  # ms
             # ./rtt_rate_loss.sh 20ms 20ms 4mbps 1 4kb
             script_f.write('./rtt_rate_loss.sh ' + str(delay)+'ms ' + str(delay) +
-                           'ms '+str(rate)+'mpbs '+str(loss)+' '+str(rate)+'kb\n')
+                           'ms '+str(rate)+'mbps '+str(loss)+' '+str(rate)+'kb\n')
             # sleep 1
             if this_time % 1.0 != 0:
                 print('time error')
