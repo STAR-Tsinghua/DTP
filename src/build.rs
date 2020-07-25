@@ -206,7 +206,7 @@ fn main() {
     }
 
     cc::Build::new()
-        .file("src/aitrans/aitrans.cxx")
+        .file("src/aitrans/pre_solution.cxx")
         .file("src/aitrans/solution.cxx")
         .include("src/aitrans/include/")
         .cpp(true)

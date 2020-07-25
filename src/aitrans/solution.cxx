@@ -1,10 +1,5 @@
-#include "aitrans.hxx"
+#include "solution.hxx"
 
-// struct Blocks {
-//   uint64_t *blocks_id, *blocks_deadline, *blocks_priority,
-//   *blocks_create_time, *block_size; 
-//  uint64_t block_num;
-// };
 void SolutionInit(){
     your_parameter["max_packet_size"] = 1350;
     your_parameter["init_ssthresh"] = 2 * your_parameter["max_packet_size"];
