@@ -309,10 +309,10 @@ impl StreamMap {
         self.flushable.push_back(stream_id);
     }
 
-    /// todo: return sum of losted depend blocks' weight
-    pub fn check_depend(&self, stream_id: u64) -> bool {
-        self.is_canceled(stream_id)
-    }
+    // /// todo: return sum of losted depend blocks' weight
+    // pub fn check_depend(&self, stream_id: u64) -> bool {
+    //     self.is_canceled(stream_id)
+    // }
 
     /// Removes and returns the first stream ID from the flushable streams
     /// queue.
@@ -331,6 +331,26 @@ impl StreamMap {
             let mut block_num = 0;
             for i in (0..self.flushable.len()).rev() {
                 let &id = self.flushable.get(i).unwrap();
+                // check if need to cancel this block
+                let stream = self.get(id).unwrap();
+                let passed_time = match SystemTime::now()
+                    .duration_since(stream.send.start_time.unwrap())
+                {
+                    Ok(n) => n.as_millis(),
+                    Err(_) => panic!("SystemTime before start time!"),
+                };
+                if passed_time as u64 > stream.send.deadline {
+                    self.cancel_block(id)?;
+                    // Block canceled, so non-flushable
+                    trace!(
+                        "flushable.remove block {}",
+                        self.flushable.get(i).unwrap()
+                    );
+                    self.flushable.swap_remove_back(i);
+                    continue;
+                }
+                // add the block struct(as string) to blocks, and sended to C++
+                // code later
                 let block = self.get_block_string(id);
                 blocks += &block;
                 block_num += 1;
@@ -453,10 +473,10 @@ impl StreamMap {
         }
     }
 
-    /// return ture if block has already been canceled
-    pub fn is_canceled(&self, stream_id: u64) -> bool {
-        self.canceled_depend.contains(&stream_id)
-    }
+    // /// return ture if block has already been canceled
+    // pub fn is_canceled(&self, stream_id: u64) -> bool {
+    //     self.canceled_depend.contains(&stream_id)
+    // }
 
     /// Adds or removes the stream ID to/from the canceled streams set.
     ///
@@ -1220,7 +1240,7 @@ impl SendBuf {
 
     /// Creates a new send buffer with deadline
     fn new_full(
-        max_data: u64, deadline: u64, priority: u64, depend_id: u64,
+        max_data: u64, deadline: u64, priority: u64, _depend_id: u64,
     ) -> SendBuf {
         SendBuf {
             max_data,
