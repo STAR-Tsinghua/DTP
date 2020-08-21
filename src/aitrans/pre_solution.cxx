@@ -27,7 +27,7 @@ uint64_t CSelectBlock(char *blocks_string, uint64_t block_num,
     /*********** Player's Code End*************/
 }
 
-uint64_t Ccc_trigger(char *event_type, uint64_t rtt, uint64_t bytes_in_flight, uint64_t cwnd) {
+void Ccc_trigger(char *event_type, uint64_t rtt, uint64_t bytes_in_flight, uint64_t *congestion_window, uint64_t *pacing_rate) {
     fprintf(stderr, "event_type=%s\n", event_type);
-    return SolutionCcTrigger(event_type, rtt, bytes_in_flight, cwnd);
+    return SolutionCcTrigger(event_type, rtt, bytes_in_flight, congestion_window, pacing_rate);
 }

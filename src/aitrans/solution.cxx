@@ -18,9 +18,10 @@ uint64_t SolutionSelectPacket(struct Blocks blocks, uint64_t current_time) {
     /************** END CODE HERE ***************/
 }
 
-uint64_t SolutionCcTrigger(char *event_type, uint64_t rtt, uint64_t bytes_in_flight, uint64_t cwnd) {
+void SolutionCcTrigger(char *event_type, uint64_t rtt, uint64_t bytes_in_flight, uint64_t *congestion_window, uint64_t *pacing_rate) {
     /************** START CODE HERE ***************/
     fprintf(stderr, "rtt: %lu, bytes_in_flight: %lu\n", rtt, bytes_in_flight);
+    uint64_t cwnd = *congestion_window;
     // return new cwnd, for example:
     uint64_t ssthresh = your_parameter["ssthresh"];
     if (event_type[11] == 'F') {  // EVENT_TYPE_FINISHED
@@ -35,6 +36,7 @@ uint64_t SolutionCcTrigger(char *event_type, uint64_t rtt, uint64_t bytes_in_fli
         your_parameter["ssthresh"] = cwnd;
     }
     fprintf(stderr,"new cwnd: %lu, ssthresh = %lu\n", cwnd, your_parameter["ssthresh"]);
-    return cwnd;
+    *pacing_rate = 123456789;
+    *congestion_window = cwnd;
     /************** END CODE HERE ***************/
 }

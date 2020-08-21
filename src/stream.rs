@@ -58,13 +58,15 @@ pub fn select_block(
 }
 extern {
     fn Ccc_trigger(
-        event_type: *const c_char, rtt: u64, bytes_in_flight: u64, cwnd: u64,
-    ) -> u64;
+        event_type: *const c_char, rtt: u64, bytes_in_flight: u64,
+        cwnd: *mut u64, pacing_rate: *mut u64,
+    );
 }
 pub fn cc_trigger(
-    event_type: *const c_char, rtt: u64, bytes_in_flight: u64, cwnd: u64,
-) -> u64 {
-    unsafe { Ccc_trigger(event_type, rtt, bytes_in_flight, cwnd) }
+    event_type: *const c_char, rtt: u64, bytes_in_flight: u64, cwnd: *mut u64,
+    pacing_rate: *mut u64,
+) {
+    unsafe { Ccc_trigger(event_type, rtt, bytes_in_flight, cwnd, pacing_rate) };
 }
 
 /// Keeps track of QUIC streams and enforces stream limits.

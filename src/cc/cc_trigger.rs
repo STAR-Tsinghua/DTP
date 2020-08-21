@@ -39,6 +39,8 @@ use std::os::raw::c_char;
 pub struct CCTrigger {
     congestion_window: u64,
 
+    pacing_rate: u64, // bps
+
     bytes_in_flight: usize,
 
     congestion_recovery_start_time: Option<Instant>,
@@ -51,6 +53,8 @@ impl cc::CongestionControl for CCTrigger {
     {
         CCTrigger {
             congestion_window: cc::INITIAL_WINDOW as u64,
+
+            pacing_rate: u64::max_value(), // bps
 
             bytes_in_flight: 0,
 
@@ -93,12 +97,14 @@ impl cc::CongestionControl for CCTrigger {
         let c_str = CString::new("EVENT_TYPE_FINISHED").unwrap();
         // obtain a pointer to a valid zero-terminated string
         let c_ptr: *const c_char = c_str.as_ptr();
-        self.congestion_window = cc_trigger(
+        cc_trigger(
             c_ptr,
             srtt.as_millis() as u64,
             self.bytes_in_flight as u64,
-            self.congestion_window,
+            &mut self.congestion_window,
+            &mut self.pacing_rate,
         );
+        trace!("pacing_rate:{}", self.pacing_rate());
     }
 
     fn congestion_event(
@@ -108,17 +114,18 @@ impl cc::CongestionControl for CCTrigger {
         let c_str = CString::new("EVENT_TYPE_DROP").unwrap();
         // obtain a pointer to a valid zero-terminated string
         let c_ptr: *const c_char = c_str.as_ptr();
-        self.congestion_window = cc_trigger(
+        cc_trigger(
             c_ptr,
             srtt.as_millis() as u64,
             self.bytes_in_flight as u64,
-            self.congestion_window,
+            &mut self.congestion_window,
+            &mut self.pacing_rate,
         );
     }
 
     // unused
     fn pacing_rate(&self) -> u64 {
-        u64::max_value()
+        self.pacing_rate
     }
 
     fn cc_bbr_begin_ack(&mut self, _ack_time: Instant) {}
