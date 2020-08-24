@@ -29,6 +29,7 @@ include = [
      "/include",
      "/quiche.svg",
      "/src",
+     "/src/aitrans/include",
 ]
 
 [features]

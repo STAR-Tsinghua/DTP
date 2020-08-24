@@ -233,12 +233,12 @@ static void sender_cb(EV_P_ ev_timer *w, int revents) {
             conn_io->send_round++;
             conn_io->sender.repeat = send_time_gap;
             ev_timer_again(loop, &conn_io->sender);
-            fprintf(stderr,"time gap: %f\n",send_time_gap);
+            fprintf(stderr, "time gap: %f\n", send_time_gap);
             if (conn_io->send_round >= conn_io->configs_len) {
                 ev_timer_stop(loop, &conn_io->sender);
                 break;
             }
-            break;//每次只发一个block
+            break;  //每次只发一个block
         }
     }
     flush_egress(loop, conn_io);
@@ -303,7 +303,8 @@ static struct conn_io *create_conn(struct ev_loop *loop, uint8_t *odcid,
 
     HASH_ADD(hh, conns->h, cid, LOCAL_CONN_ID_LEN, conn_io);
 
-    fprintf(stderr, "new connection\n");
+    fprintf(stderr, "new connection  time: %lu\n",
+            getCurrentUsec() / 1000 / 1000);
 
     return conn_io;
 }
@@ -517,7 +518,6 @@ int main(int argc, char *argv[]) {
     const char *host = argv[1];
     const char *port = argv[2];
     dtp_cfg_fname = argv[3];
-
 
     const struct addrinfo hints = {.ai_family = PF_UNSPEC,
                                    .ai_socktype = SOCK_DGRAM,

@@ -204,10 +204,8 @@ fn main() {
     if cfg!(feature = "pkg-config-meta") {
         write_pkg_config();
     }
-
     cc::Build::new()
         .file("src/aitrans/pre_solution.cxx")
-        .file("src/aitrans/solution.cxx")
         .include("src/aitrans/include/")
         .cpp(true)
         .compile("aitrans");

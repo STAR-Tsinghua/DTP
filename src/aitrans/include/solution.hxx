@@ -1,5 +1,5 @@
-#ifndef AITRANS_H_
-#define AITRANS_H_
+#ifndef SOLUTION_H_
+#define SOLUTION_H_
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,4 +18,4 @@ extern "C" {
     void SolutionCcTrigger(char *event_type, uint64_t rtt, uint64_t bytes_in_flight, uint64_t *congestion_window, uint64_t *pacing_rate);
 }
 
-#endif /* AITRANS_H_ */
+#endif /* SOLUTION_H_ */
