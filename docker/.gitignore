@@ -1,0 +1,6 @@
+aitrans-server/client
+aitrans-server/bin/*
+aitrans-server/log/*
+aitrans-server/trace/*
+TC/*
+cert.*
