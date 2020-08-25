@@ -240,6 +240,11 @@ static void sender_cb(EV_P_ ev_timer *w, int revents) {
             }
             break;  //每次只发一个block
         }
+    } else {
+        float send_time_gap = conn_io->configs[0].send_time_gap;
+        conn_io->sender.repeat = send_time_gap;
+        ev_timer_again(loop, &conn_io->sender);
+        fprintf(stderr, "try to send first block again\n");
     }
     flush_egress(loop, conn_io);
 }
