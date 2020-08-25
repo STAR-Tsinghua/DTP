@@ -66,6 +66,7 @@ criterion = { version = "0.3", optional = true }
 lazy_static = "1"
 rand = "0.7"
 bitflags = "1.2"
+threadpool = "1.8.1"
 
 [target."cfg(windows)".dependencies]
 winapi = { version = "0.3", features = ["wincrypt"] }

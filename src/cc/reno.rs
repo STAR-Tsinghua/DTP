@@ -143,6 +143,11 @@ impl cc::CongestionControl for Reno {
     fn bbr_min_rtt(&mut self) -> Duration {
         Duration::new(0, 0)
     }
+
+    fn cc_trigger(
+        &mut self, _event_type: &str, _rtt: u64, _bytes_in_flight: u64,
+    ) {
+    }
 }
 
 impl std::fmt::Debug for Reno {

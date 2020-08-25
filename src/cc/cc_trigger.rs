@@ -30,10 +30,66 @@ use std::time::Instant;
 use crate::cc;
 // use crate::packet;
 use crate::recovery::Sent;
-use crate::stream::cc_trigger;
+
+// use std::thread;
+use std::sync::mpsc;
+use threadpool::ThreadPool;
 
 use std::ffi::CString;
+use std::mem;
 use std::os::raw::c_char;
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct AckInfoC {
+    pub event_type: *const c_char,
+    pub rtt: u64,
+    pub bytes_in_flight: u64,
+}
+
+pub struct AckInfo {
+    pub event_type: String,
+    pub rtt: u64,
+    pub bytes_in_flight: u64,
+}
+
+extern {
+    fn Ccc_trigger(
+        ack_infos: *mut AckInfoC, ack_num: u64, cwnd: *mut u64,
+        pacing_rate: *mut u64,
+    );
+}
+pub fn cc_trigger_async(
+    ack_infos: Vec<AckInfo>, cwnd: u64, pacing_rate: u64,
+    tx: mpsc::Sender<(u64, u64)>,
+) {
+    let mut c_ack_infos = vec![];
+    let mut c_strs: Vec<CString> = Vec::new();
+    let mut c_ptrs: Vec<*const c_char> = Vec::new();
+    for info in ack_infos.iter() {
+        c_strs.push(CString::new(&(*info.event_type)).unwrap());
+        // obtain a pointer to a valid zero-terminated string
+        c_ptrs.push(c_strs.last().unwrap().as_ptr());
+        c_ack_infos.push(AckInfoC {
+            event_type: *c_ptrs.last().unwrap(),
+            rtt: info.rtt,
+            bytes_in_flight: info.bytes_in_flight,
+        });
+    }
+
+    c_ack_infos.shrink_to_fit();
+    let ack_ptr = c_ack_infos.as_mut_ptr();
+    let ack_num = c_ack_infos.len() as u64;
+    mem::forget(c_ack_infos);
+    let mut cwnd = cwnd;
+    let mut pacing_rate = pacing_rate;
+    unsafe { Ccc_trigger(ack_ptr, ack_num, &mut cwnd, &mut pacing_rate) };
+    // todo use ack info to get new cwnd
+    match tx.send((cwnd, pacing_rate)) {
+        Err(v) => println!("{}", v),
+        _ => (),
+    };
+}
 
 /// cc trigger of aitrans implementation.
 pub struct CCTrigger {
@@ -44,6 +100,13 @@ pub struct CCTrigger {
     bytes_in_flight: usize,
 
     congestion_recovery_start_time: Option<Instant>,
+
+    // channel for  multi thread
+    cwnd_rx: Option<mpsc::Receiver<(u64, u64)>>,
+    cwnd_tx: Option<mpsc::Sender<(u64, u64)>>,
+    // threadpool for  multi thread
+    pool: ThreadPool,
+    ack_infos: Vec<AckInfo>,
 }
 
 impl cc::CongestionControl for CCTrigger {
@@ -59,6 +122,11 @@ impl cc::CongestionControl for CCTrigger {
             bytes_in_flight: 0,
 
             congestion_recovery_start_time: None,
+
+            cwnd_rx: None,
+            cwnd_tx: None,
+            pool: ThreadPool::new(2),
+            ack_infos: vec![],
         }
     }
 
@@ -94,15 +162,10 @@ impl cc::CongestionControl for CCTrigger {
         _app_limited: bool, _trace_id: &str,
     ) {
         self.bytes_in_flight -= packet.size;
-        let c_str = CString::new("EVENT_TYPE_FINISHED").unwrap();
-        // obtain a pointer to a valid zero-terminated string
-        let c_ptr: *const c_char = c_str.as_ptr();
-        cc_trigger(
-            c_ptr,
+        self.cc_trigger(
+            "EVENT_TYPE_FINISHED",
             srtt.as_millis() as u64,
             self.bytes_in_flight as u64,
-            &mut self.congestion_window,
-            &mut self.pacing_rate,
         );
         trace!("pacing_rate:{}", self.pacing_rate());
     }
@@ -111,16 +174,62 @@ impl cc::CongestionControl for CCTrigger {
         &mut self, srtt: Duration, _time_sent: Instant, _now: Instant,
         _trace_id: &str,
     ) {
-        let c_str = CString::new("EVENT_TYPE_DROP").unwrap();
-        // obtain a pointer to a valid zero-terminated string
-        let c_ptr: *const c_char = c_str.as_ptr();
-        cc_trigger(
-            c_ptr,
+        self.cc_trigger(
+            "EVENT_TYPE_DROP",
             srtt.as_millis() as u64,
             self.bytes_in_flight as u64,
-            &mut self.congestion_window,
-            &mut self.pacing_rate,
         );
+    }
+
+    // todo:add ack info to self
+    fn cc_trigger(&mut self, event_type: &str, rtt: u64, bytes_in_flight: u64) {
+        // get the cwnd from the channel
+        // if there are no thread are running, spawn a new thread
+        // move the ack info to the spawned thread
+        let event_type = String::from(event_type);
+        let ack_info = AckInfo {
+            event_type,
+            rtt,
+            bytes_in_flight,
+        };
+        self.ack_infos.push(ack_info);
+        let cwnd = self.congestion_window;
+        let pacing_rate = self.pacing_rate();
+        // init cwnd_tx and cwnd_rx
+        if self.cwnd_rx.is_none() {
+            let (tx, rx) = mpsc::channel();
+            let tx1 = mpsc::Sender::clone(&tx);
+            let mut ack_infos = vec![];
+            mem::swap(&mut self.ack_infos, &mut ack_infos);
+            self.pool.execute(move || {
+                cc_trigger_async(ack_infos, cwnd, pacing_rate, tx1)
+            });
+
+            self.cwnd_rx = Some(rx);
+            self.cwnd_tx = Some(tx);
+        }
+        // check the channel and if there are some ack to be tackle
+        // let t1 = Instant::now();
+        let recved = self.cwnd_rx.as_ref().unwrap().try_recv();
+        // println!("channel recv use : {} us",t1.elapsed().as_micros());
+        match recved {
+            Ok((cwnd, pacing_rate)) => {
+                self.congestion_window = cwnd; // last thread finished
+                self.pacing_rate = pacing_rate;
+                if !self.ack_infos.is_empty() {
+                    // there are some ack to be tackle
+                    let tx1 =
+                        mpsc::Sender::clone(&self.cwnd_tx.as_ref().unwrap());
+                    // let t1 = Instant::now();
+                    let mut ack_infos = vec![];
+                    mem::swap(&mut self.ack_infos, &mut ack_infos);
+                    self.pool.execute(move || {
+                        cc_trigger_async(ack_infos, cwnd, pacing_rate, tx1)
+                    });
+                }
+            },
+            _ => (),
+        };
     }
 
     // unused

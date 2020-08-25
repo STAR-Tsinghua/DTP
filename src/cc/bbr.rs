@@ -2592,6 +2592,12 @@ impl cc::CongestionControl for BBR {
     fn bbr_min_rtt(&mut self) -> Duration {
         self.get_min_rtt()
     }
+
+    // unused
+    fn cc_trigger(
+        &mut self, _event_type: &str, _rtt: u64, _bytes_in_flight: u64,
+    ) {
+    }
 }
 
 impl std::fmt::Debug for BBR {

@@ -129,6 +129,9 @@ where
     fn cc_bbr_begin_ack(&mut self, ack_time: Instant);
     fn cc_bbr_end_ack(&mut self);
     fn bbr_min_rtt(&mut self) -> Duration;
+
+    /// aitrans
+    fn cc_trigger(&mut self, event_type: &str, rtt: u64, bytes_in_flight: u64);
 }
 
 /// Instances a congestion control implementation based on the CC algorithm ID.
