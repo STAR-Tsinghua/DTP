@@ -21,3 +21,7 @@ cd /aitrans-server
 3. 查看log
 - client log 记录了block完成情况: /aitrans-server/client.log
 - server log 记录了server端log，可查看报错: /aitrans-server/log/server_aitrans.log
+
+## qoe 计算
+1. 将qoe.py放到和client.log所在路径下;
+2. 运行 `python qoe.py`.
