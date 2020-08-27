@@ -13,8 +13,9 @@ cp libsolution.so ../lib
 2. 分别运行server和client
 ```bash
 cd /aitrans-server
-./run_server.sh
-./run_client.sh
+./run_server.sh #ip需要改成该容器的
+#另开一个容器作为client，并运行：
+./run_client.sh #ip需要改成上方作为server的容器的
 # ./kill_server.sh 关闭后台的server
 ```
 3. 查看log
