@@ -3,7 +3,7 @@
 docker import aitrans_ubuntu.tar
 ```
 ## docker使用 步骤（内部版）
-1. 文件地址：/aitrans-server
+1. 文件地址：/home/aitrans-server
 2. 编译 libsolution.so
 ```bash
 cd /aitrans-server/demo
