@@ -6,6 +6,7 @@ cp ../src/aitrans/solution.cxx aitrans-server/demo
 cp ../src/aitrans/include/solution.hxx aitrans-server/demo
 trash aitrans-server/log/*
 #client
+cp ../target/release/examples/client aitrans-server
 #server
-cp ../examples/server aitrans-server/bin
+cp ../examples/server aitrans-server/bin/
 #trace

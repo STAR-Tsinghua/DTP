@@ -4,9 +4,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
-#include <map>
+#include <unordered_map>
 using namespace std;
-static map<string, uint64_t> your_parameter;
+static unordered_map<string, uint64_t> your_parameter;
+static unordered_map<string, double> float_parameter;
 extern "C" {
     struct AckInfo {
         char *event_type;
