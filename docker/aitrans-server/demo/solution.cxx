@@ -23,7 +23,7 @@ void SolutionCcTrigger(AckInfo *ack_infos, uint64_t ack_num, uint64_t *congestio
     uint64_t cwnd = *congestion_window;
     for(uint64_t i=0;i<ack_num;i++){
         char* event_type = ack_infos[i].event_type;
-        fprintf(stderr, "event_type=%s\n", event_type);
+        // fprintf(stderr, "event_type=%s\n", event_type);
         const uint64_t max_packet_size = 1350;
         const uint64_t init_ssthresh = 2 * max_packet_size;
         if (your_parameter.count("ssthresh") <= 0)

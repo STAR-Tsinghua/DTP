@@ -3,7 +3,7 @@
 
 uint64_t CSelectBlock(char *blocks_string, uint64_t block_num,
                       uint64_t current_time) {
-    fprintf(stderr, "blocks_string: %s\n", blocks_string);
+    // fprintf(stderr, "blocks_string: %s\n", blocks_string);
     struct Blocks blocks;
     blocks.block_num = block_num;
     blocks.blocks_id = (uint64_t *)malloc(block_num * sizeof(uint64_t));
@@ -19,8 +19,8 @@ uint64_t CSelectBlock(char *blocks_string, uint64_t block_num,
         blocks.blocks_create_time[i] =
             strtoull(blocks_string, &blocks_string, 10);
         blocks.blocks_size[i] = strtoull(blocks_string, &blocks_string, 10);
-        fprintf(stderr,"block_id: %lu, deadline: %lu, priority: %lu, create_time: %lu, size: %lu\n",blocks.blocks_id[i], blocks.blocks_deadline[i],
-            blocks.blocks_priority[i], blocks.blocks_create_time[i], blocks.blocks_size[i]);
+        // fprintf(stderr,"block_id: %lu, deadline: %lu, priority: %lu, create_time: %lu, size: %lu\n",blocks.blocks_id[i], blocks.blocks_deadline[i],
+            // blocks.blocks_priority[i], blocks.blocks_create_time[i], blocks.blocks_size[i]);
     }
     /*********** Player's Code Here*************/
     return SolutionSelectPacket(blocks, current_time);

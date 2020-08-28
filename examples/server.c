@@ -94,9 +94,9 @@ static struct connections *conns = NULL;
 
 static void timeout_cb(EV_P_ ev_timer *w, int revents);
 
-static void debug_log(const char *line, void *argp) {
-    fprintf(stderr, "%s\n", line);
-}
+// static void debug_log(const char *line, void *argp) {
+//     fprintf(stderr, "%s\n", line);
+// }
 
 static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
     static uint8_t out[MAX_DATAGRAM_SIZE];
@@ -115,7 +115,7 @@ static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
         //         t_now - conn_io->t_last, conn_io->can_send);
         conn_io->t_last = t_now;
         if (conn_io->can_send < 1350) {
-            fprintf(stderr, "can_send < 1350\n");
+            // fprintf(stderr, "can_send < 1350\n");
             conn_io->pace_timer.repeat = 0.001;
             ev_timer_again(loop, &conn_io->pace_timer);
             break;
@@ -123,7 +123,7 @@ static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
         ssize_t written = quiche_conn_send(conn_io->conn, out, sizeof(out));
 
         if (written == QUICHE_ERR_DONE) {
-            fprintf(stderr, "done writing\n");
+            // fprintf(stderr, "done writing\n");
             conn_io->done_writing = true;  // app_limited
             conn_io->pace_timer.repeat = 99999.0;
             ev_timer_again(loop, &conn_io->pace_timer);
@@ -131,7 +131,7 @@ static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
         }
 
         if (written < 0) {
-            fprintf(stderr, "failed to create packet: %zd\n", written);
+            // fprintf(stderr, "failed to create packet: %zd\n", written);
             return;
         }
 
@@ -143,7 +143,7 @@ static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
             return;
         }
 
-        fprintf(stderr, "sent %zd bytes\n", sent);
+        // fprintf(stderr, "sent %zd bytes\n", sent);
         conn_io->can_send -= sent;
     }
 
@@ -154,7 +154,7 @@ static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
 
 static void flush_egress_pace(EV_P_ ev_timer *pace_timer, int revents) {
     struct conn_io *conn_io = pace_timer->data;
-    fprintf(stderr, "begin flush_egress_pace\n");
+    // fprintf(stderr, "begin flush_egress_pace\n");
     flush_egress(loop, conn_io);
 }
 
@@ -224,16 +224,16 @@ static void sender_cb(EV_P_ ev_timer *w, int revents) {
             if (quiche_conn_stream_send_full(conn_io->conn, stream_id, buf,
                                              block_size, true, deadline,
                                              priority, depend_id) < 0) {
-                fprintf(stderr, "failed to send data round %d\n",
-                        conn_io->send_round);
+                // fprintf(stderr, "failed to send data round %d\n",
+                        // conn_io->send_round);
             } else {
-                fprintf(stderr, "send round %d\n", conn_io->send_round);
+                // fprintf(stderr, "send round %d\n", conn_io->send_round);
             }
 
             conn_io->send_round++;
             conn_io->sender.repeat = send_time_gap;
             ev_timer_again(loop, &conn_io->sender);
-            fprintf(stderr, "time gap: %f\n", send_time_gap);
+            // fprintf(stderr, "time gap: %f\n", send_time_gap);
             if (conn_io->send_round >= conn_io->configs_len) {
                 ev_timer_stop(loop, &conn_io->sender);
                 break;
@@ -244,7 +244,7 @@ static void sender_cb(EV_P_ ev_timer *w, int revents) {
         float send_time_gap = conn_io->configs[0].send_time_gap;
         conn_io->sender.repeat = send_time_gap;
         ev_timer_again(loop, &conn_io->sender);
-        fprintf(stderr, "try to send first block again\n");
+        // fprintf(stderr, "try to send first block again\n");
     }
     flush_egress(loop, conn_io);
 }
@@ -283,7 +283,7 @@ static struct conn_io *create_conn(struct ev_loop *loop, uint8_t *odcid,
 
     cfgs = parse_dtp_config(dtp_cfg_fname, &cfgs_len);
     if (cfgs_len <= 0) {
-        fprintf(stderr, "No valid DTP configuration\n");
+        fprintf(stderr, "No valid configuration\n");
     } else {
         conn_io->configs_len = cfgs_len;
         conn_io->configs = cfgs;
@@ -308,7 +308,7 @@ static struct conn_io *create_conn(struct ev_loop *loop, uint8_t *odcid,
 
     HASH_ADD(hh, conns->h, cid, LOCAL_CONN_ID_LEN, conn_io);
 
-    fprintf(stderr, "new connection  time: %lu\n",
+    fprintf(stderr, "new connection,  timestamp: %lu\n",
             getCurrentUsec() / 1000 / 1000);
 
     return conn_io;
@@ -332,7 +332,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
 
         if (read < 0) {
             if ((errno == EWOULDBLOCK) || (errno == EAGAIN)) {
-                fprintf(stderr, "recv would block\n");
+                // fprintf(stderr, "recv would block\n");
                 break;
             }
 
@@ -367,14 +367,14 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
 
         if (conn_io == NULL) {
             if (!quiche_version_is_supported(version)) {
-                fprintf(stderr, "version negotiation\n");
+                // fprintf(stderr, "version negotiation\n");
 
                 ssize_t written = quiche_negotiate_version(
                     scid, scid_len, dcid, dcid_len, out, sizeof(out));
 
                 if (written < 0) {
-                    fprintf(stderr, "failed to create vneg packet: %zd\n",
-                            written);
+                    // fprintf(stderr, "failed to create vneg packet: %zd\n",
+                            // written);
                     return;
                 }
 
@@ -386,12 +386,12 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                     return;
                 }
 
-                fprintf(stderr, "sent %zd bytes\n", sent);
+                // fprintf(stderr, "sent %zd bytes\n", sent);
                 return;
             }
 
             if (token_len == 0) {
-                fprintf(stderr, "stateless retry\n");
+                // fprintf(stderr, "stateless retry\n");
 
                 mint_token(dcid, dcid_len, &peer_addr, peer_addr_len, token,
                            &token_len);
@@ -401,8 +401,8 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                                  token, token_len, out, sizeof(out));
 
                 if (written < 0) {
-                    fprintf(stderr, "failed to create retry packet: %zd\n",
-                            written);
+                    // fprintf(stderr, "failed to create retry packet: %zd\n",
+                    //         written);
                     return;
                 }
 
@@ -414,13 +414,13 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                     return;
                 }
 
-                fprintf(stderr, "sent %zd bytes\n", sent);
+                // fprintf(stderr, "sent %zd bytes\n", sent);
                 return;
             }
 
             if (!validate_token(token, token_len, &peer_addr, peer_addr_len,
                                 odcid, &odcid_len)) {
-                fprintf(stderr, "invalid address validation token\n");
+                // fprintf(stderr, "invalid address validation token\n");
                 return;
             }
 
@@ -436,16 +436,16 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
         ssize_t done = quiche_conn_recv(conn_io->conn, buf, read);
 
         if (done == QUICHE_ERR_DONE) {
-            fprintf(stderr, "done reading\n");
+            // fprintf(stderr, "done reading\n");
             break;
         }
 
         if (done < 0) {
-            fprintf(stderr, "failed to process packet: %zd\n", done);
+            // fprintf(stderr, "failed to process packet: %zd\n", done);
             return;
         }
 
-        fprintf(stderr, "recv %zd bytes\n", done);
+        // fprintf(stderr, "recv %zd bytes\n", done);
 
         if (quiche_conn_is_established(conn_io->conn)) {
             uint64_t s = 0;
@@ -453,7 +453,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
             quiche_stream_iter *readable = quiche_conn_readable(conn_io->conn);
 
             while (quiche_stream_iter_next(readable, &s)) {
-                fprintf(stderr, "stream %" PRIu64 " is readable\n", s);
+                // fprintf(stderr, "stream %" PRIu64 " is readable\n", s);
 
                 bool fin = false;
                 ssize_t recv_len = quiche_conn_stream_recv(
@@ -493,7 +493,7 @@ static void timeout_cb(EV_P_ ev_timer *w, int revents) {
     struct conn_io *conn_io = w->data;
     quiche_conn_on_timeout(conn_io->conn);
 
-    fprintf(stderr, "timeout\n");
+    // fprintf(stderr, "timeout\n");
 
     flush_egress(loop, conn_io);
 
@@ -501,10 +501,12 @@ static void timeout_cb(EV_P_ ev_timer *w, int revents) {
         quiche_stats stats;
 
         quiche_conn_stats(conn_io->conn, &stats);
+        // fprintf(stderr,
+        //         "connection closed, recv=%zu sent=%zu lost=%zu rtt=%" PRIu64
+        //         "ns cwnd=%zu\n",
+        //         stats.recv, stats.sent, stats.lost, stats.rtt, stats.cwnd);
         fprintf(stderr,
-                "connection closed, recv=%zu sent=%zu lost=%zu rtt=%" PRIu64
-                "ns cwnd=%zu\n",
-                stats.recv, stats.sent, stats.lost, stats.rtt, stats.cwnd);
+                    "connection closed, you can see result in client.log\n");
 
         // fflush(stdout);
 
@@ -528,7 +530,7 @@ int main(int argc, char *argv[]) {
                                    .ai_socktype = SOCK_DGRAM,
                                    .ai_protocol = IPPROTO_UDP};
 
-    quiche_enable_debug_logging(debug_log, NULL);
+    // quiche_enable_debug_logging(debug_log, NULL);
 
     struct addrinfo *local;
     if (getaddrinfo(host, port, &hints, &local) != 0) {
@@ -554,7 +556,7 @@ int main(int argc, char *argv[]) {
 
     config = quiche_config_new(QUICHE_PROTOCOL_VERSION);
     if (config == NULL) {
-        fprintf(stderr, "failed to create config\n");
+        // fprintf(stderr, "failed to create config\n");
         return -1;
     }
 
