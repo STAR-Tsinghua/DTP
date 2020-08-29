@@ -4,11 +4,11 @@ SOURCE_DIR = ../src
 AITRANS_DIR = ../src/aitrans
 AITRANS_LIB_DIR = ../src/aitrans/include
 BUILD_DIR = $(CURDIR)/build
-LIB_DIR = $(BUILD_DIR)/debug
+LIB_DIR = $(BUILD_DIR)/release
 INCLUDE_DIR = ../include
 
 INCS = -I$(INCLUDE_DIR)
-CFLAGS = -I. -Wall -Werror -pedantic -fsanitize=address -g
+CFLAGS = -I. -Wall -Werror -pedantic -fsanitize=address -O1 #-g
 
 ifeq ($(OS), Darwin)
 CFLAGS += -framework Security
@@ -40,7 +40,7 @@ http3-server: http3-server.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
 
 $(LIB_DIR)/libquiche.a: $(shell find $(SOURCE_DIR) -type f -name '*.rs') $(AITRANS_DIR)/pre_solution.cxx $(AITRANS_DIR)/solution.cxx $(AITRANS_LIB_DIR)/pre_solution.hxx
-	cd .. && cargo build --target-dir $(BUILD_DIR)
+	cd .. && cargo build --release --target-dir $(BUILD_DIR)
 
 clean:
 	@$(RM) -rf client client_trace server http3-client http3-server build/
