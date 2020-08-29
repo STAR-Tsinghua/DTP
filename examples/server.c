@@ -139,7 +139,7 @@ static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
                               (struct sockaddr *)&conn_io->peer_addr,
                               conn_io->peer_addr_len);
         if (sent != written) {
-            perror("failed to send");
+            // perror("failed to send");
             return;
         }
 
@@ -225,7 +225,7 @@ static void sender_cb(EV_P_ ev_timer *w, int revents) {
                                              block_size, true, deadline,
                                              priority, depend_id) < 0) {
                 // fprintf(stderr, "failed to send data round %d\n",
-                        // conn_io->send_round);
+                // conn_io->send_round);
             } else {
                 // fprintf(stderr, "send round %d\n", conn_io->send_round);
             }
@@ -374,7 +374,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
 
                 if (written < 0) {
                     // fprintf(stderr, "failed to create vneg packet: %zd\n",
-                            // written);
+                    // written);
                     return;
                 }
 
@@ -382,7 +382,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                     sendto(conns->sock, out, written, 0,
                            (struct sockaddr *)&peer_addr, peer_addr_len);
                 if (sent != written) {
-                    perror("failed to send");
+                    // perror("failed to send");
                     return;
                 }
 
@@ -410,7 +410,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                     sendto(conns->sock, out, written, 0,
                            (struct sockaddr *)&peer_addr, peer_addr_len);
                 if (sent != written) {
-                    perror("failed to send");
+                    // perror("failed to send");
                     return;
                 }
 
@@ -506,7 +506,7 @@ static void timeout_cb(EV_P_ ev_timer *w, int revents) {
         //         "ns cwnd=%zu\n",
         //         stats.recv, stats.sent, stats.lost, stats.rtt, stats.cwnd);
         fprintf(stderr,
-                    "connection closed, you can see result in client.log\n");
+                "connection closed, you can see result in client.log\n");
 
         // fflush(stdout);
 
