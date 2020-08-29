@@ -428,6 +428,8 @@ pub struct Config {
     grease: bool,
 
     cc_algorithm: cc::Algorithm,
+
+    bct_offset: i64,
 }
 
 impl Config {
@@ -449,6 +451,7 @@ impl Config {
             application_protos: Vec::new(),
             grease: true,
             cc_algorithm: cc::Algorithm::Reno, // default cc algorithm
+            bct_offset: 0,
         })
     }
 
@@ -698,6 +701,13 @@ impl Config {
     pub fn set_cc_algorithm(&mut self, algo: CongestionControlAlgorithm) {
         self.cc_algorithm = algo;
         if self.cc_algorithm == cc::Algorithm::CcTrigger {
+            // in aitrans, we need ntp
+            use crate::ntp::ntp_offset;
+            let (bct_offset, s) = ntp_offset("ntp1.aliyun.com:123");
+            // let (bct_offset, s) = ntp_offset("0.pool.ntp.org:123");
+            // let (bct_offset, s) = ntp_offset("time1.cloud.tencent.com:123");
+            self.bct_offset = bct_offset;
+            eprintln!("{}", s);
             unsafe { SolutionInit() };
         }
     }
@@ -827,6 +837,9 @@ pub struct Connection {
 
     /// Whether to send GREASE.
     grease: bool,
+
+    /// time offset get by ntp
+    bct_offset: i128,
 }
 
 /// Creates a new server-side connection.
@@ -1082,6 +1095,8 @@ impl Connection {
             closed: false,
 
             grease: config.grease,
+
+            bct_offset: config.bct_offset as i128,
         });
 
         if let Some(odcid) = odcid {
@@ -2071,7 +2086,9 @@ impl Connection {
                         block_size: stream.send.block_size() as u64,
                         block_priority,
                         block_deadline,
-                        start_time: stream.send.start_time() as u64,
+                        start_time: (stream.send.start_time() as i128 -
+                            self.bct_offset)
+                            as u64,
                     };
                     if frame.wire_len() <= left {
                         payload_len += frame.wire_len();
@@ -5385,6 +5402,7 @@ mod crypto;
 mod ffi;
 mod frame;
 pub mod h3;
+mod ntp;
 mod octets;
 mod packet;
 mod rand;
