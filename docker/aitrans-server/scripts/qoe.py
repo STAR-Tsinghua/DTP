@@ -19,10 +19,10 @@ def cal_single_block_qoe(block_file, a):
     lines[:] = lines[start : end]
     lines[:] = [line.strip() for line in lines]
     lines[:] = [list(map(float, line.split())) for line in lines]
-    satisfied_blocks = [line for line in lines if line[2] <= line[5]]
+    satisfied_blocks = [line for line in lines if line[1] <= line[4]]
     qoe = 0
     for block in satisfied_blocks:
-        qoe += a * (int(block[4]) + 1)
+        qoe += a * (int(block[3]) + 1)
     return qoe
 
 def cal_player_qoe(a):
