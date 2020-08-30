@@ -475,9 +475,11 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
 
             quiche_conn_stats(conn_io->conn, &stats);
             fprintf(stderr,
-                    "connection closed, recv=%zu sent=%zu lost=%zu rtt=%" PRIu64
-                    "ns cwnd=%zu\n",
-                    stats.recv, stats.sent, stats.lost, stats.rtt, stats.cwnd);
+                    "connection closed, you can see result in client.log\n");
+            // fprintf(stderr,
+            //         "connection closed, recv=%zu sent=%zu lost=%zu rtt=%"
+            //         PRIu64 "ns cwnd=%zu\n", stats.recv, stats.sent,
+            //         stats.lost, stats.rtt, stats.cwnd);
 
             HASH_DELETE(hh, conns->h, conn_io);
 
