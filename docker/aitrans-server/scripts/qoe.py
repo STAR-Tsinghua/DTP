@@ -12,7 +12,7 @@ def cal_single_block_qoe(block_file, a):
         lines = f.readlines()
     start, end = 0, 0
     for idx, line in enumerate(lines):
-        if line.startswith("BlockID  goodbytes"):
+        if line.startswith("BlockID  bct"):
             start = idx + 1
         if line.startswith(("connection closed")):
             end = idx
