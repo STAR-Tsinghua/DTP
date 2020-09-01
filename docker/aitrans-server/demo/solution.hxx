@@ -9,7 +9,7 @@ using namespace std;
 static unordered_map<string, uint64_t> your_parameter;
 static unordered_map<string, double> float_parameter;
 extern "C" {
-    struct AckInfo {
+    struct CcInfo {
         char *event_type;
         uint64_t rtt;
         uint64_t bytes_in_flight;
@@ -20,8 +20,8 @@ extern "C" {
         uint64_t block_num;
     };
     void SolutionInit();
-    uint64_t SolutionSelectPacket(struct Blocks blocks, uint64_t current_time);
-    void SolutionCcTrigger(AckInfo* ack_infos, uint64_t ack_num, uint64_t *congestion_window, uint64_t *pacing_rate);
+    uint64_t SolutionSelectBlock(struct Blocks blocks, uint64_t current_time);
+    void SolutionCcTrigger(CcInfo* cc_infos, uint64_t ack_num, uint64_t *congestion_window, uint64_t *pacing_rate);
 }
 
 #endif /* SOLUTION_H_ */

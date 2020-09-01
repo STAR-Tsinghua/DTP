@@ -41,13 +41,13 @@ use std::os::raw::c_char;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct AckInfoC {
+pub struct CcInfoC {
     pub event_type: *const c_char,
     pub rtt: u64,
     pub bytes_in_flight: u64,
 }
 
-pub struct AckInfo {
+pub struct CcInfo {
     pub event_type: String,
     pub rtt: u64,
     pub bytes_in_flight: u64,
@@ -55,32 +55,32 @@ pub struct AckInfo {
 
 extern {
     fn Ccc_trigger(
-        ack_infos: *mut AckInfoC, ack_num: u64, cwnd: *mut u64,
+        cc_infos: *mut CcInfoC, ack_num: u64, cwnd: *mut u64,
         pacing_rate: *mut u64,
     );
 }
 pub fn cc_trigger_async(
-    ack_infos: Vec<AckInfo>, cwnd: u64, pacing_rate: u64,
+    cc_infos: Vec<CcInfo>, cwnd: u64, pacing_rate: u64,
     tx: mpsc::Sender<(u64, u64)>,
 ) {
-    let mut c_ack_infos = vec![];
+    let mut c_cc_infos = vec![];
     let mut c_strs: Vec<CString> = Vec::new();
     let mut c_ptrs: Vec<*const c_char> = Vec::new();
-    for info in ack_infos.iter() {
+    for info in cc_infos.iter() {
         c_strs.push(CString::new(&(*info.event_type)).unwrap());
         // obtain a pointer to a valid zero-terminated string
         c_ptrs.push(c_strs.last().unwrap().as_ptr());
-        c_ack_infos.push(AckInfoC {
+        c_cc_infos.push(CcInfoC {
             event_type: *c_ptrs.last().unwrap(),
             rtt: info.rtt,
             bytes_in_flight: info.bytes_in_flight,
         });
     }
 
-    c_ack_infos.shrink_to_fit();
-    let ack_ptr = c_ack_infos.as_mut_ptr();
-    let ack_num = c_ack_infos.len() as u64;
-    mem::forget(c_ack_infos);
+    c_cc_infos.shrink_to_fit();
+    let ack_ptr = c_cc_infos.as_mut_ptr();
+    let ack_num = c_cc_infos.len() as u64;
+    mem::forget(c_cc_infos);
     let mut cwnd = cwnd;
     let mut pacing_rate = pacing_rate;
     unsafe { Ccc_trigger(ack_ptr, ack_num, &mut cwnd, &mut pacing_rate) };
@@ -106,7 +106,7 @@ pub struct CCTrigger {
     cwnd_tx: Option<mpsc::Sender<(u64, u64)>>,
     // threadpool for  multi thread
     pool: ThreadPool,
-    ack_infos: Vec<AckInfo>,
+    cc_infos: Vec<CcInfo>,
 }
 
 impl cc::CongestionControl for CCTrigger {
@@ -126,7 +126,7 @@ impl cc::CongestionControl for CCTrigger {
             cwnd_rx: None,
             cwnd_tx: None,
             pool: ThreadPool::new(2),
-            ack_infos: vec![],
+            cc_infos: vec![],
         }
     }
 
@@ -187,22 +187,22 @@ impl cc::CongestionControl for CCTrigger {
         // if there are no thread are running, spawn a new thread
         // move the ack info to the spawned thread
         let event_type = String::from(event_type);
-        let ack_info = AckInfo {
+        let ack_info = CcInfo {
             event_type,
             rtt,
             bytes_in_flight,
         };
-        self.ack_infos.push(ack_info);
+        self.cc_infos.push(ack_info);
         let cwnd = self.congestion_window;
         let pacing_rate = self.pacing_rate();
         // init cwnd_tx and cwnd_rx
         if self.cwnd_rx.is_none() {
             let (tx, rx) = mpsc::channel();
             let tx1 = mpsc::Sender::clone(&tx);
-            let mut ack_infos = vec![];
-            mem::swap(&mut self.ack_infos, &mut ack_infos);
+            let mut cc_infos = vec![];
+            mem::swap(&mut self.cc_infos, &mut cc_infos);
             self.pool.execute(move || {
-                cc_trigger_async(ack_infos, cwnd, pacing_rate, tx1)
+                cc_trigger_async(cc_infos, cwnd, pacing_rate, tx1)
             });
 
             self.cwnd_rx = Some(rx);
@@ -216,15 +216,15 @@ impl cc::CongestionControl for CCTrigger {
             Ok((cwnd, pacing_rate)) => {
                 self.congestion_window = cwnd; // last thread finished
                 self.pacing_rate = pacing_rate;
-                if !self.ack_infos.is_empty() {
+                if !self.cc_infos.is_empty() {
                     // there are some ack to be tackle
                     let tx1 =
                         mpsc::Sender::clone(&self.cwnd_tx.as_ref().unwrap());
                     // let t1 = Instant::now();
-                    let mut ack_infos = vec![];
-                    mem::swap(&mut self.ack_infos, &mut ack_infos);
+                    let mut cc_infos = vec![];
+                    mem::swap(&mut self.cc_infos, &mut cc_infos);
                     self.pool.execute(move || {
-                        cc_trigger_async(ack_infos, cwnd, pacing_rate, tx1)
+                        cc_trigger_async(cc_infos, cwnd, pacing_rate, tx1)
                     });
                 }
             },

@@ -207,7 +207,7 @@ fn main() {
             let mut frame = quic_trace::Frame::new();
             frame.set_frame_type(quic_trace::FrameType::ACK);
 
-            let mut info = quic_trace::AckInfo::new();
+            let mut info = quic_trace::CcInfo::new();
 
             let delay = caps.get(2).unwrap().as_str();
             let delay = delay.parse::<u64>().unwrap() * 2_u64.pow(3_u32);

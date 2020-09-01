@@ -23,10 +23,10 @@ uint64_t CSelectBlock(char *blocks_string, uint64_t block_num,
             // blocks.blocks_priority[i], blocks.blocks_create_time[i], blocks.blocks_size[i]);
     }
     /*********** Player's Code Here*************/
-    return SolutionSelectPacket(blocks, current_time);
+    return SolutionSelectBlock(blocks, current_time);
     /*********** Player's Code End*************/
 }
 
-void Ccc_trigger(AckInfo *ack_infos, uint64_t ack_num, uint64_t *congestion_window, uint64_t *pacing_rate) {
-    SolutionCcTrigger(ack_infos, ack_num, congestion_window, pacing_rate);
+void Ccc_trigger(CcInfo *cc_infos, uint64_t ack_num, uint64_t *congestion_window, uint64_t *pacing_rate) {
+    SolutionCcTrigger(cc_infos, ack_num, congestion_window, pacing_rate);
 }
