@@ -10,7 +10,7 @@ static unordered_map<string, uint64_t> your_parameter;
 static unordered_map<string, double> float_parameter;
 extern "C" {
     struct CcInfo {
-        char *event_type;
+        char event_type;
         uint64_t rtt;
         uint64_t bytes_in_flight;
     };

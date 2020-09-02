@@ -22,22 +22,22 @@ void SolutionCcTrigger(CcInfo *cc_infos, uint64_t ack_num, uint64_t *congestion_
     /************** START CODE HERE ***************/
     uint64_t cwnd = *congestion_window;
     for(uint64_t i=0;i<ack_num;i++){
-        char* event_type = cc_infos[i].event_type;
-        // fprintf(stderr, "event_type=%s\n", event_type);
+        char event_type = cc_infos[i].event_type;
+        // fprintf(stderr, "event_type=%c\n", event_type);
         const uint64_t max_packet_size = 1350;
         const uint64_t init_ssthresh = 2 * max_packet_size;
         if (your_parameter.count("ssthresh") <= 0)
             your_parameter["ssthresh"] = init_ssthresh;
         // return new cwnd, for example:
         uint64_t ssthresh = your_parameter["ssthresh"];
-        if (event_type[11] == 'F') {  // EVENT_TYPE_FINISHED
+        if (event_type == 'F') {  // EVENT_TYPE_FINISHED
             if (cwnd > ssthresh)
                 cwnd += max_packet_size / 2;
             else {
                 cwnd += max_packet_size;
             }
         }
-        if (event_type[11] == 'D') {
+        if (event_type == 'D') {
             cwnd = cwnd / 2;  // EVENT_TYPE_DROP
             your_parameter["ssthresh"] = cwnd;
         }

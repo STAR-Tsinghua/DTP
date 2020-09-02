@@ -145,7 +145,7 @@ impl cc::CongestionControl for Reno {
     }
 
     fn cc_trigger(
-        &mut self, _event_type: &str, _rtt: u64, _bytes_in_flight: u64,
+        &mut self, _event_type: char, _rtt: u64, _bytes_in_flight: u64,
     ) {
     }
 }

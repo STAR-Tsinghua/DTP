@@ -35,52 +35,31 @@ use crate::recovery::Sent;
 use std::sync::mpsc;
 use threadpool::ThreadPool;
 
-use std::ffi::CString;
 use std::mem;
 use std::os::raw::c_char;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct CcInfoC {
-    pub event_type: *const c_char,
-    pub rtt: u64,
-    pub bytes_in_flight: u64,
-}
-
 pub struct CcInfo {
-    pub event_type: String,
+    pub event_type: c_char,
     pub rtt: u64,
     pub bytes_in_flight: u64,
 }
 
 extern {
     fn Ccc_trigger(
-        cc_infos: *mut CcInfoC, ack_num: u64, cwnd: *mut u64,
+        cc_infos: *mut CcInfo, ack_num: u64, cwnd: *mut u64,
         pacing_rate: *mut u64,
     );
 }
 pub fn cc_trigger_async(
-    cc_infos: Vec<CcInfo>, cwnd: u64, pacing_rate: u64,
+    cc_infos: &mut Vec<CcInfo>, cwnd: u64, pacing_rate: u64,
     tx: mpsc::Sender<(u64, u64)>,
 ) {
-    let mut c_cc_infos = vec![];
-    let mut c_strs: Vec<CString> = Vec::new();
-    let mut c_ptrs: Vec<*const c_char> = Vec::new();
-    for info in cc_infos.iter() {
-        c_strs.push(CString::new(&(*info.event_type)).unwrap());
-        // obtain a pointer to a valid zero-terminated string
-        c_ptrs.push(c_strs.last().unwrap().as_ptr());
-        c_cc_infos.push(CcInfoC {
-            event_type: *c_ptrs.last().unwrap(),
-            rtt: info.rtt,
-            bytes_in_flight: info.bytes_in_flight,
-        });
-    }
-
-    c_cc_infos.shrink_to_fit();
-    let ack_ptr = c_cc_infos.as_mut_ptr();
-    let ack_num = c_cc_infos.len() as u64;
-    mem::forget(c_cc_infos);
+    cc_infos.shrink_to_fit();
+    let ack_ptr = cc_infos.as_mut_ptr();
+    let ack_num = cc_infos.len() as u64;
+    mem::forget(cc_infos);
     let mut cwnd = cwnd;
     let mut pacing_rate = pacing_rate;
     unsafe { Ccc_trigger(ack_ptr, ack_num, &mut cwnd, &mut pacing_rate) };
@@ -163,7 +142,7 @@ impl cc::CongestionControl for CCTrigger {
     ) {
         self.bytes_in_flight -= packet.size;
         self.cc_trigger(
-            "EVENT_TYPE_FINISHED",
+            'F',
             srtt.as_millis() as u64,
             self.bytes_in_flight as u64,
         );
@@ -175,18 +154,18 @@ impl cc::CongestionControl for CCTrigger {
         _trace_id: &str,
     ) {
         self.cc_trigger(
-            "EVENT_TYPE_DROP",
+            'D',
             srtt.as_millis() as u64,
             self.bytes_in_flight as u64,
         );
     }
 
     // todo:add ack info to self
-    fn cc_trigger(&mut self, event_type: &str, rtt: u64, bytes_in_flight: u64) {
+    fn cc_trigger(&mut self, event_type: char, rtt: u64, bytes_in_flight: u64) {
         // get the cwnd from the channel
         // if there are no thread are running, spawn a new thread
         // move the ack info to the spawned thread
-        let event_type = String::from(event_type);
+        let event_type = event_type as c_char;
         let ack_info = CcInfo {
             event_type,
             rtt,
@@ -202,7 +181,7 @@ impl cc::CongestionControl for CCTrigger {
             let mut cc_infos = vec![];
             mem::swap(&mut self.cc_infos, &mut cc_infos);
             self.pool.execute(move || {
-                cc_trigger_async(cc_infos, cwnd, pacing_rate, tx1)
+                cc_trigger_async(&mut cc_infos, cwnd, pacing_rate, tx1)
             });
 
             self.cwnd_rx = Some(rx);
@@ -224,7 +203,7 @@ impl cc::CongestionControl for CCTrigger {
                     let mut cc_infos = vec![];
                     mem::swap(&mut self.cc_infos, &mut cc_infos);
                     self.pool.execute(move || {
-                        cc_trigger_async(cc_infos, cwnd, pacing_rate, tx1)
+                        cc_trigger_async(&mut cc_infos, cwnd, pacing_rate, tx1)
                     });
                 }
             },
