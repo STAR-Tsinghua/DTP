@@ -21,7 +21,7 @@ extern "C" {
     };
     void SolutionInit();
     uint64_t SolutionSelectBlock(struct Blocks blocks, uint64_t current_time);
-    void SolutionCcTrigger(CcInfo* cc_infos, uint64_t ack_num, uint64_t *congestion_window, uint64_t *pacing_rate);
+    void SolutionCcTrigger(CcInfo* cc_infos, uint64_t cc_num, uint64_t *congestion_window, uint64_t *pacing_rate);
 }
 
 #endif /* SOLUTION_H_ */

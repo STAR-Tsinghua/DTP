@@ -48,8 +48,7 @@ pub struct CcInfo {
 
 extern {
     fn Ccc_trigger(
-        cc_infos: *mut CcInfo, ack_num: u64, cwnd: *mut u64,
-        pacing_rate: *mut u64,
+        cc_infos: *mut CcInfo, cc_num: u64, cwnd: *mut u64, pacing_rate: *mut u64,
     );
 }
 pub fn cc_trigger_async(
@@ -58,11 +57,11 @@ pub fn cc_trigger_async(
 ) {
     cc_infos.shrink_to_fit();
     let ack_ptr = cc_infos.as_mut_ptr();
-    let ack_num = cc_infos.len() as u64;
+    let cc_num = cc_infos.len() as u64;
     mem::forget(cc_infos);
     let mut cwnd = cwnd;
     let mut pacing_rate = pacing_rate;
-    unsafe { Ccc_trigger(ack_ptr, ack_num, &mut cwnd, &mut pacing_rate) };
+    unsafe { Ccc_trigger(ack_ptr, cc_num, &mut cwnd, &mut pacing_rate) };
     // todo use ack info to get new cwnd
     match tx.send((cwnd, pacing_rate)) {
         Err(v) => println!("{}", v),

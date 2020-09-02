@@ -14,14 +14,17 @@ extern "C" {
         uint64_t rtt;
         uint64_t bytes_in_flight;
     };
-    struct Blocks {
-        uint64_t *blocks_id, *blocks_deadline, *blocks_priority,
-            *blocks_create_time, *blocks_size;
-        uint64_t block_num;
+    struct Block {
+        uint64_t block_id;
+        uint64_t block_deadline;
+        uint64_t block_priority;
+        uint64_t block_create_time;
+        uint64_t block_size;
     };
+
     void SolutionInit();
-    uint64_t SolutionSelectBlock(struct Blocks blocks, uint64_t current_time);
-    void SolutionCcTrigger(CcInfo* cc_infos, uint64_t ack_num, uint64_t *congestion_window, uint64_t *pacing_rate);
+    uint64_t SolutionSelectBlock(Block* blocks, uint64_t block_num, uint64_t current_time);
+    void SolutionCcTrigger(CcInfo* cc_infos, uint64_t cc_num, uint64_t *congestion_window, uint64_t *pacing_rate);
 }
 
 #endif /* SOLUTION_H_ */
