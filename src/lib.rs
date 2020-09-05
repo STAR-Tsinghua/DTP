@@ -1718,7 +1718,14 @@ impl Connection {
         }
 
         // Calculate available space in the packet based on congestion window.
-        let mut left = cmp::min(self.recovery.cwnd_available(), b.cap());
+        let mut left = if self.recovery.loss_probes[epoch] > 0 && !is_closing {
+            // sending probe packets might cause the sender's bytes in flight to
+            // exceed the congestion window
+            trace!("will send probe.");
+            b.cap()
+        } else {
+            cmp::min(self.recovery.cwnd_available(), b.cap())
+        };
 
         // Limit data sent by the server based on the amount of data received
         // from the client before its address is validated.
