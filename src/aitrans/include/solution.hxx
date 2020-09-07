@@ -20,6 +20,7 @@ extern "C" {
         uint64_t block_priority;
         uint64_t block_create_time;
         uint64_t block_size;
+        uint64_t remaining_size;
     };
 
     void SolutionInit(uint64_t *init_congestion_window, uint64_t *init_pacing_rate);

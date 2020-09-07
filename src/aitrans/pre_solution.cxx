@@ -12,6 +12,7 @@ uint64_t CSelectBlock(char *blocks_string, uint64_t block_num, uint64_t next_pac
         blocks[i].block_create_time =
             strtoull(blocks_string, &blocks_string, 10);
         blocks[i].block_size = strtoull(blocks_string, &blocks_string, 10);
+        blocks[i].remaining_size = strtoull(blocks_string, &blocks_string, 10);
         // fprintf(stderr,"block_id: %lu, deadline: %lu, priority: %lu, create_time: %lu, size: %lu\n",blocks.blocks_id[i], blocks.blocks_deadline[i],
             // blocks.blocks_priority[i], blocks.blocks_create_time[i], blocks.blocks_size[i]);
     }
