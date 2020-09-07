@@ -2430,7 +2430,7 @@ mod tests {
 
 // module_bbr
 impl cc::CongestionControl for BBR {
-    fn new() -> Self
+    fn new(_init_cwnd: u64, _init_pacing_rate: u64) -> Self
     where
         Self: Sized,
     {

@@ -140,7 +140,11 @@ impl Recovery {
 
             loss_probes: [0; packet::EPOCH_COUNT],
 
-            cc: cc::new_congestion_control(config.cc_algorithm),
+            cc: cc::new_congestion_control(
+                config.cc_algorithm,
+                config.init_cwnd,
+                config.init_pacing_rate,
+            ),
 
             app_limited: false,
         }

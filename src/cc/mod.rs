@@ -78,7 +78,7 @@ pub trait CongestionControl
 where
     Self: std::fmt::Debug,
 {
-    fn new() -> Self
+    fn new(init_cwnd: u64, init_pacing_rate: u64) -> Self
     where
         Self: Sized;
 
@@ -135,12 +135,16 @@ where
 }
 
 /// Instances a congestion control implementation based on the CC algorithm ID.
-pub fn new_congestion_control(algo: Algorithm) -> Box<dyn CongestionControl> {
+pub fn new_congestion_control(
+    algo: Algorithm, init_cwnd: u64, init_pacing_rate: u64,
+) -> Box<dyn CongestionControl> {
     trace!("Initializing congestion control: {:?}", algo);
     match algo {
-        Algorithm::Reno => Box::new(cc::reno::Reno::new()),
+        Algorithm::Reno =>
+            Box::new(cc::reno::Reno::new(init_cwnd, init_pacing_rate)),
         Algorithm::BBR => Box::new(cc::bbr::BBR::default()),
-        Algorithm::CcTrigger => Box::new(cc::cc_trigger::CCTrigger::new()),
+        Algorithm::CcTrigger =>
+            Box::new(cc::cc_trigger::CCTrigger::new(init_cwnd, init_pacing_rate)),
     }
 }
 

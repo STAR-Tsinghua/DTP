@@ -1,10 +1,13 @@
 #include "solution.hxx"
+#define INFINITY 10000000000000000;
 
-void SolutionInit(){
+void SolutionInit(uint64_t *init_congestion_window, uint64_t *init_pacing_rate){
     your_parameter["max_packet_size"] = 1350;
     your_parameter["init_ssthresh"] = 2 * your_parameter["max_packet_size"];
     your_parameter["last_time"]=0;
     your_parameter["ssthresh"] = your_parameter["init_ssthresh"];
+    *init_congestion_window = 10 * your_parameter["max_packet_size"];
+    *init_pacing_rate = INFINITY; //only use cwnd, set rate infinity
 }
 
 uint64_t SolutionSelectBlock(Block* blocks, uint64_t block_num, uint64_t current_time) {
@@ -19,6 +22,7 @@ uint64_t SolutionSelectBlock(Block* blocks, uint64_t block_num, uint64_t current
 }
 
 void SolutionCcTrigger(CcInfo *cc_infos, uint64_t cc_num, uint64_t *congestion_window, uint64_t *pacing_rate) {
+    fprintf(stderr,"old cwnd: %lu, rate = %lu\n", *congestion_window, *pacing_rate);
     /************** START CODE HERE ***************/
     uint64_t cwnd = *congestion_window;
     for(uint64_t i=0;i<cc_num;i++){
@@ -43,7 +47,7 @@ void SolutionCcTrigger(CcInfo *cc_infos, uint64_t cc_num, uint64_t *congestion_w
         }
         // fprintf(stderr,"new cwnd: %lu, ssthresh = %lu\n", cwnd, your_parameter["ssthresh"]);
     }
-    // fprintf(stderr,"new cwnd: %lu, ssthresh = %lu\n", cwnd, your_parameter["ssthresh"]);
+    fprintf(stderr,"new cwnd: %lu, ssthresh = %lu\n", cwnd, your_parameter["ssthresh"]);
     *pacing_rate = 123456789;
     *congestion_window = cwnd;
     /************** END CODE HERE ***************/

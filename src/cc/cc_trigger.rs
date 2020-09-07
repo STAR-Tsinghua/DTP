@@ -88,14 +88,14 @@ pub struct CCTrigger {
 }
 
 impl cc::CongestionControl for CCTrigger {
-    fn new() -> Self
+    fn new(init_cwnd: u64, init_pacing_rate: u64) -> Self
     where
         Self: Sized,
     {
         CCTrigger {
-            congestion_window: cc::INITIAL_WINDOW as u64,
+            congestion_window: init_cwnd,
 
-            pacing_rate: u64::max_value(), // bps
+            pacing_rate: init_pacing_rate, // bps
 
             bytes_in_flight: 0,
 

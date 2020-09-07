@@ -45,7 +45,7 @@ pub struct Reno {
 }
 
 impl cc::CongestionControl for Reno {
-    fn new() -> Self
+    fn new(_init_cwnd: u64, _init_pacing_rate: u64) -> Self
     where
         Self: Sized,
     {

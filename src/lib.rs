@@ -272,7 +272,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 
 extern {
-    fn SolutionInit();
+    fn SolutionInit(init_cwnd: *mut u64, init_pacing_rate: *mut u64);
 }
 
 pub use crate::cc::Algorithm as CongestionControlAlgorithm;
@@ -429,6 +429,10 @@ pub struct Config {
 
     cc_algorithm: cc::Algorithm,
 
+    init_cwnd: u64,
+
+    init_pacing_rate: u64,
+
     bct_offset: i64,
 }
 
@@ -452,6 +456,8 @@ impl Config {
             grease: true,
             cc_algorithm: cc::Algorithm::Reno, // default cc algorithm
             bct_offset: 0,
+            init_cwnd: cc::INITIAL_WINDOW as u64,
+            init_pacing_rate: u64::max_value(),
         })
     }
 
@@ -688,9 +694,6 @@ impl Config {
     /// ```
     pub fn set_cc_algorithm_name(&mut self, name: &str) -> Result<()> {
         self.cc_algorithm = CongestionControlAlgorithm::from_str(name)?;
-        if self.cc_algorithm == cc::Algorithm::CcTrigger {
-            unsafe { SolutionInit() };
-        }
 
         Ok(())
     }
@@ -708,7 +711,9 @@ impl Config {
             // let (bct_offset, s) = ntp_offset("time1.cloud.tencent.com:123");
             self.bct_offset = bct_offset;
             eprintln!("{}", s);
-            unsafe { SolutionInit() };
+            unsafe {
+                SolutionInit(&mut self.init_cwnd, &mut self.init_pacing_rate)
+            };
         }
     }
 }
