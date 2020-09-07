@@ -213,7 +213,7 @@ static void sender_cb(EV_P_ ev_timer *w, int revents) {
         static uint8_t buf[MAX_BLOCK_SIZE];
 
         for (int i = conn_io->send_round; i < conn_io->configs_len; i++) {
-            send_time_gap = conn_io->configs[i].send_time_gap;
+            send_time_gap = conn_io->configs[i].send_time_gap;  // sec
             deadline = conn_io->configs[i].deadline;
             priority = conn_io->configs[i].priority;
             block_size = conn_io->configs[i].block_size;
@@ -235,17 +235,22 @@ static void sender_cb(EV_P_ ev_timer *w, int revents) {
             }
 
             conn_io->send_round++;
-            conn_io->sender.repeat = send_time_gap;
-            ev_timer_again(loop, &conn_io->sender);
-            // fprintf(stderr, "time gap: %f\n", send_time_gap);
             if (conn_io->send_round >= conn_io->configs_len) {
                 ev_timer_stop(loop, &conn_io->sender);
                 break;
             }
-            break;  //每次只发一个block
+
+            if (send_time_gap > 0.005) {
+                conn_io->sender.repeat = send_time_gap;
+                ev_timer_again(loop, &conn_io->sender);
+                // fprintf(stderr, "time gap: %f\n", send_time_gap);
+                break;  //每次只发一个block
+            } else {
+                continue;  //如果间隔太小，则接着发
+            }
         }
     } else {
-        float send_time_gap = conn_io->configs[0].send_time_gap;
+        float send_time_gap = 0.005;
         conn_io->sender.repeat = send_time_gap;
         ev_timer_again(loop, &conn_io->sender);
         // fprintf(stderr, "try to send first block again\n");
@@ -299,7 +304,7 @@ static struct conn_io *create_conn(struct ev_loop *loop, uint8_t *odcid,
     conn_io->can_send = 1350;
     conn_io->done_writing = false;
 
-    // start sending immediately and repeat every 100ms.
+    // start sending first block immediately.
     ev_timer_init(&conn_io->sender, sender_cb, cfgs[0].send_time_gap, 9999.0);
     ev_timer_start(loop, &conn_io->sender);
     conn_io->sender.data = conn_io;
