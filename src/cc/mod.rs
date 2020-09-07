@@ -117,7 +117,7 @@ where
     /// CongestionEvent(time_sent)
     fn congestion_event(
         &mut self, srtt: Duration, time_sent: Instant, now: Instant,
-        trace_id: &str,
+        trace_id: &str, packet_id: u64,
     );
 
     /// bbr function
@@ -131,7 +131,10 @@ where
     fn bbr_min_rtt(&mut self) -> Duration;
 
     /// aitrans
-    fn cc_trigger(&mut self, event_type: char, rtt: u64, bytes_in_flight: u64);
+    fn cc_trigger(
+        &mut self, event_type: char, rtt: u64, bytes_in_flight: u64,
+        packet_id: u64,
+    );
 }
 
 /// Instances a congestion control implementation based on the CC algorithm ID.

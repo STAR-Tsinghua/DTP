@@ -575,6 +575,7 @@ impl Recovery {
                 largest_lost_pkt.time,
                 now,
                 trace_id,
+                largest_lost_pkt.pkt_num,
             );
 
             if self.in_persistent_congestion(&largest_lost_pkt) {

@@ -11,8 +11,10 @@ static unordered_map<string, double> float_parameter;
 extern "C" {
     struct CcInfo {
         char event_type;
+        uint64_t event_time;
         uint64_t rtt;
         uint64_t bytes_in_flight;
+        uint64_t packet_id;
     };
     struct Block {
         uint64_t block_id;

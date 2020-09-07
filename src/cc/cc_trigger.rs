@@ -26,6 +26,7 @@
 
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
 
 use crate::cc;
 // use crate::packet;
@@ -42,8 +43,10 @@ use std::os::raw::c_char;
 #[derive(Debug, Copy, Clone)]
 pub struct CcInfo {
     pub event_type: c_char,
+    pub event_time: u64,
     pub rtt: u64,
     pub bytes_in_flight: u64,
+    pub packet_id: u64,
 }
 
 extern {
@@ -144,31 +147,43 @@ impl cc::CongestionControl for CCTrigger {
             'F',
             srtt.as_millis() as u64,
             self.bytes_in_flight as u64,
+            packet.pkt_num, // packet_id
         );
         trace!("pacing_rate:{}", self.pacing_rate());
     }
 
     fn congestion_event(
         &mut self, srtt: Duration, _time_sent: Instant, _now: Instant,
-        _trace_id: &str,
+        _trace_id: &str, packet_id: u64,
     ) {
         self.cc_trigger(
             'D',
             srtt.as_millis() as u64,
             self.bytes_in_flight as u64,
+            packet_id, // packet_id
         );
     }
 
     // todo:add ack info to self
-    fn cc_trigger(&mut self, event_type: char, rtt: u64, bytes_in_flight: u64) {
+    fn cc_trigger(
+        &mut self, event_type: char, rtt: u64, bytes_in_flight: u64,
+        packet_id: u64,
+    ) {
         // get the cwnd from the channel
         // if there are no thread are running, spawn a new thread
         // move the ack info to the spawned thread
         let event_type = event_type as c_char;
+        let event_time =
+            match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+                Ok(n) => n.as_millis() as u64,
+                Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+            }; // ms
         let ack_info = CcInfo {
             event_type,
+            event_time,
             rtt,
             bytes_in_flight,
+            packet_id,
         };
         self.cc_infos.push(ack_info);
         let cwnd = self.congestion_window;
