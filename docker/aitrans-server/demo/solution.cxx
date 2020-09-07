@@ -1,18 +1,21 @@
 #include "solution.hxx"
+#define INFINITY 10000000000000000;
 
-void SolutionInit(){
+void SolutionInit(uint64_t *init_congestion_window, uint64_t *init_pacing_rate){
     your_parameter["max_packet_size"] = 1350;
     your_parameter["init_ssthresh"] = 2 * your_parameter["max_packet_size"];
     your_parameter["last_time"]=0;
     your_parameter["ssthresh"] = your_parameter["init_ssthresh"];
+    *init_congestion_window = 10 * your_parameter["max_packet_size"];
+    *init_pacing_rate = INFINITY; //only use cwnd, set rate infinity
 }
 
-uint64_t SolutionSelectBlock(Block* blocks, uint64_t block_num, uint64_t current_time) {
+uint64_t SolutionSelectBlock(Block* blocks, uint64_t block_num, uint64_t next_packet_id, uint64_t current_time) {
     /************** START CODE HERE ***************/
     // return the id of block you want to send, for example:
     uint64_t last_time = your_parameter["last_time"];
     // fprintf(stderr,"last_time = %lu, current_time = %lu\n", last_time, current_time);
-    
+    // fprintf(stderr,"next_packet_id: %lu\n",next_packet_id);
     your_parameter["last_time"] = current_time;
     return blocks[0].block_id;
     /************** END CODE HERE ***************/
