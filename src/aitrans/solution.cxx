@@ -10,19 +10,18 @@ void SolutionInit(uint64_t *init_congestion_window, uint64_t *init_pacing_rate){
     *init_pacing_rate = INFINITY; //only use cwnd, set rate infinity
 }
 
-uint64_t SolutionSelectBlock(Block* blocks, uint64_t block_num, uint64_t current_time) {
+uint64_t SolutionSelectBlock(Block* blocks, uint64_t block_num, uint64_t next_packet_id, uint64_t current_time) {
     /************** START CODE HERE ***************/
     // return the id of block you want to send, for example:
     uint64_t last_time = your_parameter["last_time"];
     // fprintf(stderr,"last_time = %lu, current_time = %lu\n", last_time, current_time);
-    
+    // fprintf(stderr,"next_packet_id: %lu\n",next_packet_id);
     your_parameter["last_time"] = current_time;
     return blocks[0].block_id;
     /************** END CODE HERE ***************/
 }
 
 void SolutionCcTrigger(CcInfo *cc_infos, uint64_t cc_num, uint64_t *congestion_window, uint64_t *pacing_rate) {
-    fprintf(stderr,"old cwnd: %lu, rate = %lu\n", *congestion_window, *pacing_rate);
     /************** START CODE HERE ***************/
     uint64_t cwnd = *congestion_window;
     for(uint64_t i=0;i<cc_num;i++){
@@ -47,7 +46,7 @@ void SolutionCcTrigger(CcInfo *cc_infos, uint64_t cc_num, uint64_t *congestion_w
         }
         // fprintf(stderr,"new cwnd: %lu, ssthresh = %lu\n", cwnd, your_parameter["ssthresh"]);
     }
-    fprintf(stderr,"new cwnd: %lu, ssthresh = %lu\n", cwnd, your_parameter["ssthresh"]);
+    // fprintf(stderr,"new cwnd: %lu, ssthresh = %lu\n", cwnd, your_parameter["ssthresh"]);
     *pacing_rate = 123456789;
     *congestion_window = cwnd;
     /************** END CODE HERE ***************/

@@ -1,7 +1,7 @@
 #include "pre_solution.hxx"
 #include "solution.hxx"
 
-uint64_t CSelectBlock(char *blocks_string, uint64_t block_num,
+uint64_t CSelectBlock(char *blocks_string, uint64_t block_num, uint64_t next_packet_id,
                       uint64_t current_time) {
     // fprintf(stderr, "blocks_string: %s\n", blocks_string);
     Block* blocks=(Block *)malloc(block_num * sizeof(Block));
@@ -16,7 +16,7 @@ uint64_t CSelectBlock(char *blocks_string, uint64_t block_num,
             // blocks.blocks_priority[i], blocks.blocks_create_time[i], blocks.blocks_size[i]);
     }
     /*********** Player's Code Here*************/
-    return SolutionSelectBlock(blocks, block_num, current_time);
+    return SolutionSelectBlock(blocks, block_num, next_packet_id, current_time);
     /*********** Player's Code End*************/
 }
 

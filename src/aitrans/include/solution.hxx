@@ -23,7 +23,7 @@ extern "C" {
     };
 
     void SolutionInit(uint64_t *init_congestion_window, uint64_t *init_pacing_rate);
-    uint64_t SolutionSelectBlock(Block* blocks, uint64_t block_num, uint64_t current_time);
+    uint64_t SolutionSelectBlock(Block* blocks, uint64_t block_num, uint64_t next_packet_id, uint64_t current_time);
     void SolutionCcTrigger(CcInfo* cc_infos, uint64_t cc_num, uint64_t *congestion_window, uint64_t *pacing_rate);
 }
 

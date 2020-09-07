@@ -48,13 +48,15 @@ use std::os::raw::c_char;
 
 extern {
     fn CSelectBlock(
-        blocks_str: *const c_char, block_num: u64, current_time: u64,
+        blocks_str: *const c_char, block_num: u64, next_packet_id: u64,
+        current_time: u64,
     ) -> u64;
 }
 pub fn select_block(
-    blocks_str: *const c_char, block_num: u64, current_time: u64,
+    blocks_str: *const c_char, block_num: u64, next_packet_id: u64,
+    current_time: u64,
 ) -> u64 {
-    unsafe { CSelectBlock(blocks_str, block_num, current_time) }
+    unsafe { CSelectBlock(blocks_str, block_num, next_packet_id, current_time) }
 }
 
 /// Keeps track of QUIC streams and enforces stream limits.
@@ -309,7 +311,8 @@ impl StreamMap {
     /// outstanding data, it needs to be added back to the queu.
     /// Return the stream with highest real priority value
     pub fn peek_flushable(
-        &mut self, _bandwidth: f64, _rtt: f64, current_time: u64,
+        &mut self, _bandwidth: f64, _rtt: f64, next_packet_id: u64,
+        current_time: u64,
     ) -> Result<Option<u64>> {
         if !self.has_flushable() {
             Ok(None)
@@ -351,8 +354,12 @@ impl StreamMap {
             let c_str = CString::new(blocks).unwrap();
             // obtain a pointer to a valid zero-terminated string
             let c_ptr: *const c_char = c_str.as_ptr();
-            let best_block_id =
-                Some(select_block(c_ptr, block_num, current_time));
+            let best_block_id = Some(select_block(
+                c_ptr,
+                block_num,
+                next_packet_id,
+                current_time,
+            ));
             // info!("best_test_id: {}",best_test_id);
             // pop(return and remove) highest_stream_id
             for i in 0..self.flushable.len() {

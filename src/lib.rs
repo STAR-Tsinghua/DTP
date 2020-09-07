@@ -2082,6 +2082,7 @@ impl Connection {
             while let Some(stream_id) = self.streams.peek_flushable(
                 bandwidth as f64,
                 rtt,
+                pn, // next_packet_id
                 now_time_ms as u64,
             )? {
                 let stream = match self.streams.get_mut(stream_id) {
