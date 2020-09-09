@@ -705,12 +705,13 @@ impl Config {
         self.cc_algorithm = algo;
         if self.cc_algorithm == cc::Algorithm::CcTrigger {
             // in aitrans, we need ntp
-            use crate::ntp::ntp_offset;
-            let (bct_offset, s) = ntp_offset("ntp1.aliyun.com:123");
+            // use crate::ntp::ntp_offset;
+            // let (bct_offset, s) = ntp_offset("ntp1.aliyun.com:123");
             // let (bct_offset, s) = ntp_offset("0.pool.ntp.org:123");
             // let (bct_offset, s) = ntp_offset("time1.cloud.tencent.com:123");
-            self.bct_offset = bct_offset;
-            eprintln!("{}", s);
+            // self.bct_offset = bct_offset;
+            self.bct_offset = 0;
+            // eprintln!("{}", s);
             unsafe {
                 SolutionInit(&mut self.init_cwnd, &mut self.init_pacing_rate)
             };
