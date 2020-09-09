@@ -31,7 +31,10 @@ use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
-use std::time::SystemTime;
+use std::time::{
+    Instant,
+    SystemTime,
+};
 
 use crate::Error;
 use crate::Result;
@@ -324,12 +327,8 @@ impl StreamMap {
                 let &id = self.flushable.get(i).unwrap();
                 // check if need to cancel this block
                 let stream = self.get(id).unwrap();
-                let passed_time = match SystemTime::now()
-                    .duration_since(stream.send.start_time.unwrap())
-                {
-                    Ok(n) => n.as_millis(),
-                    Err(_) => panic!("SystemTime before start time!"),
-                };
+                let passed_time =
+                    stream.send.start_instant.unwrap().elapsed().as_millis();
                 if passed_time as u64 > stream.send.deadline {
                     self.cancel_block(id)?;
                     // Block canceled, so non-flushable
@@ -1214,6 +1213,10 @@ pub struct SendBuf {
     /// Beginning timestamp of the block.
     start_time: Option<SystemTime>,
 
+    /// Beginning Instant of the block, Instant is a monotonically nondecreasing
+    /// clock.
+    start_instant: Option<Instant>,
+
     /// Ranges of data offsets that have been acked.
     acked: ranges::RangeSet,
 
@@ -1224,14 +1227,7 @@ pub struct SendBuf {
 impl SendBuf {
     /// Creates a new send buffer.
     fn new(max_data: u64) -> SendBuf {
-        SendBuf {
-            max_data,
-            start_time: Some(SystemTime::now()),
-            new: true,
-            priority: DEFAULT_PRIORITY,
-            deadline: MAX_DEADLINE,
-            ..SendBuf::default()
-        }
+        Self::new_full(max_data, MAX_DEADLINE, DEFAULT_PRIORITY, 0)
     }
 
     /// Creates a new send buffer with deadline
@@ -1241,6 +1237,7 @@ impl SendBuf {
         SendBuf {
             max_data,
             start_time: Some(SystemTime::now()),
+            start_instant: Some(Instant::now()),
             deadline,
             priority,
             new: true,
