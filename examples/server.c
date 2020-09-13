@@ -458,7 +458,9 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
             // start sending first block immediately.
             if (conn_io->send_round == -1) {
                 conn_io->send_round = 0;
-                conn_io->sender.repeat = cfgs[0].send_time_gap;
+                conn_io->sender.repeat = cfgs[0].send_time_gap > 0.0001
+                                             ? cfgs[0].send_time_gap
+                                             : 0.0001;
                 ev_timer_again(loop, &conn_io->sender);
             }
 
