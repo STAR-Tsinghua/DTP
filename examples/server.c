@@ -249,11 +249,6 @@ static void sender_cb(EV_P_ ev_timer *w, int revents) {
                 continue;  //如果间隔太小，则接着发
             }
         }
-    } else {
-        float send_time_gap = 0.005;
-        conn_io->sender.repeat = send_time_gap;
-        ev_timer_again(loop, &conn_io->sender);
-        // fprintf(stderr, "try to send first block again\n");
     }
     flush_egress(loop, conn_io);
 }
@@ -303,11 +298,6 @@ static struct conn_io *create_conn(struct ev_loop *loop, uint8_t *odcid,
     conn_io->t_last = getCurrentUsec();
     conn_io->can_send = 1350;
     conn_io->done_writing = false;
-
-    // start sending first block immediately.
-    ev_timer_init(&conn_io->sender, sender_cb, cfgs[0].send_time_gap, 9999.0);
-    ev_timer_start(loop, &conn_io->sender);
-    conn_io->sender.data = conn_io;
 
     ev_init(&conn_io->timer, timeout_cb);
     conn_io->timer.data = conn_io;
@@ -457,6 +447,15 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
         // fprintf(stderr, "recv %zd bytes\n", done);
 
         if (quiche_conn_is_established(conn_io->conn)) {
+            // begin send data: block trace
+            // start sending first block immediately.
+            if (conn_io->send_round == 0) {
+                ev_timer_init(&conn_io->sender, sender_cb,
+                              cfgs[0].send_time_gap, 9999.0);
+                ev_timer_start(loop, &conn_io->sender);
+                conn_io->sender.data = conn_io;
+            }
+
             uint64_t s = 0;
 
             quiche_stream_iter *readable = quiche_conn_readable(conn_io->conn);
