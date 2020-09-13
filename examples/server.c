@@ -99,6 +99,7 @@ static void timeout_cb(EV_P_ ev_timer *w, int revents);
 // }
 
 static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
+    // fprintf(stderr, "enter flush\n");
     static uint8_t out[MAX_DATAGRAM_SIZE];
     uint64_t rate = quiche_bbr_get_pacing_rate(conn_io->conn);  // bits/s
     if (conn_io->done_writing) {
@@ -201,6 +202,7 @@ static bool validate_token(const uint8_t *token, size_t token_len,
 }
 
 static void sender_cb(EV_P_ ev_timer *w, int revents) {
+    // fprintf(stderr,"enter sender cb\n");
     struct conn_io *conn_io = w->data;
 
     if (quiche_conn_is_established(conn_io->conn)) {
@@ -255,6 +257,7 @@ static void sender_cb(EV_P_ ev_timer *w, int revents) {
 
 static struct conn_io *create_conn(struct ev_loop *loop, uint8_t *odcid,
                                    size_t odcid_len) {
+    // fprintf(stderr,"enter create_conn\n");
     struct conn_io *conn_io = malloc(sizeof(*conn_io));
     if (conn_io == NULL) {
         fprintf(stderr, "failed to allocate connection IO\n");
@@ -283,7 +286,7 @@ static struct conn_io *create_conn(struct ev_loop *loop, uint8_t *odcid,
     conn_io->sock = conns->sock;
     conn_io->conn = conn;
 
-    conn_io->send_round = 0;
+    conn_io->send_round = -1;
 
     cfgs = parse_dtp_config(dtp_cfg_fname, &cfgs_len);
     if (cfgs_len <= 0) {
@@ -302,6 +305,9 @@ static struct conn_io *create_conn(struct ev_loop *loop, uint8_t *odcid,
     ev_init(&conn_io->timer, timeout_cb);
     conn_io->timer.data = conn_io;
 
+    ev_init(&conn_io->sender, sender_cb);
+    conn_io->sender.data = conn_io;
+
     ev_init(&conn_io->pace_timer, flush_egress_pace);
     conn_io->pace_timer.data = conn_io;
 
@@ -314,6 +320,7 @@ static struct conn_io *create_conn(struct ev_loop *loop, uint8_t *odcid,
 }
 
 static void recv_cb(EV_P_ ev_io *w, int revents) {
+    // fprintf(stderr,"enter recv\n");
     struct conn_io *tmp, *conn_io = NULL;
 
     static uint8_t buf[MAX_BLOCK_SIZE];
@@ -449,11 +456,10 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
         if (quiche_conn_is_established(conn_io->conn)) {
             // begin send data: block trace
             // start sending first block immediately.
-            if (conn_io->send_round == 0) {
-                ev_timer_init(&conn_io->sender, sender_cb,
-                              cfgs[0].send_time_gap, 9999.0);
-                ev_timer_start(loop, &conn_io->sender);
-                conn_io->sender.data = conn_io;
+            if (conn_io->send_round == -1) {
+                conn_io->send_round = 0;
+                conn_io->sender.repeat = cfgs[0].send_time_gap;
+                ev_timer_again(loop, &conn_io->sender);
             }
 
             uint64_t s = 0;
@@ -493,6 +499,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
 
             ev_timer_stop(loop, &conn_io->timer);
             ev_timer_stop(loop, &conn_io->sender);
+            ev_timer_stop(loop, &conn_io->pace_timer);
             quiche_conn_free(conn_io->conn);
             free(conn_io);
         }
@@ -500,6 +507,7 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
 }
 
 static void timeout_cb(EV_P_ ev_timer *w, int revents) {
+    // fprintf(stderr, "enter timeout\n");
     struct conn_io *conn_io = w->data;
     quiche_conn_on_timeout(conn_io->conn);
 
@@ -524,6 +532,7 @@ static void timeout_cb(EV_P_ ev_timer *w, int revents) {
 
         ev_timer_stop(loop, &conn_io->timer);
         ev_timer_stop(loop, &conn_io->sender);
+        ev_timer_stop(loop, &conn_io->pace_timer);
         quiche_conn_free(conn_io->conn);
         free(conn_io);
 
