@@ -41,25 +41,38 @@ use crate::Result;
 
 use crate::ranges;
 
+use std::mem;
+
 const MAX_WRITE_SIZE: usize = 1000;
 
 pub const MAX_DEADLINE: u64 = 9999999;
 pub const DEFAULT_PRIORITY: u64 = 9999999;
 
-use std::ffi::CString;
-use std::os::raw::c_char;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct Block {
+    pub block_id: u64,
+    pub block_deadline: u64,
+    pub block_priority: u64,
+    pub block_create_time: u64,
+    pub block_size: u64,
+    pub remaining_size: u64,
+}
 
 extern {
     fn CSelectBlock(
-        blocks_str: *const c_char, block_num: u64, next_packet_id: u64,
+        blocks: *const Block, block_num: u64, next_packet_id: u64,
         current_time: u64,
     ) -> u64;
 }
 pub fn select_block(
-    blocks_str: *const c_char, block_num: u64, next_packet_id: u64,
-    current_time: u64,
+    blocks_vec: &mut Vec<Block>, next_packet_id: u64, current_time: u64,
 ) -> u64 {
-    unsafe { CSelectBlock(blocks_str, block_num, next_packet_id, current_time) }
+    blocks_vec.shrink_to_fit();
+    let blocks = blocks_vec.as_mut_ptr();
+    let block_num = blocks_vec.len() as u64;
+    mem::forget(blocks_vec);
+    unsafe { CSelectBlock(blocks, block_num, next_packet_id, current_time) }
 }
 
 /// Keeps track of QUIC streams and enforces stream limits.
@@ -321,8 +334,7 @@ impl StreamMap {
             Ok(None)
         } else {
             // let mut best_block_id: Option<u64> = None;
-            let mut blocks = String::new();
-            let mut block_num = 0;
+            let mut blocks_vec = vec![];
             for i in (0..self.flushable.len()).rev() {
                 let &id = self.flushable.get(i).unwrap();
                 // check if need to cancel this block
@@ -339,26 +351,12 @@ impl StreamMap {
                     self.flushable.swap_remove_back(i);
                     continue;
                 }
-                // add the block struct(as string) to blocks, and sended to C++
-                // code later
-                let block = self.get_block_string(id);
-                blocks += &block;
-                block_num += 1;
-                // if best_block_id == None ||
-                //     self.is_better(best_block_id.unwrap(), id)
-                // {
-                //     best_block_id = Some(id);
-                // }
+                // add the block struct to blocks, and used by C++ code later
+                let block = self.get_block(id);
+                blocks_vec.push(block);
             }
-            let c_str = CString::new(blocks).unwrap();
-            // obtain a pointer to a valid zero-terminated string
-            let c_ptr: *const c_char = c_str.as_ptr();
-            let best_block_id = Some(select_block(
-                c_ptr,
-                block_num,
-                next_packet_id,
-                current_time,
-            ));
+            let best_block_id =
+                Some(select_block(&mut blocks_vec, next_packet_id, current_time));
             // info!("best_test_id: {}",best_test_id);
             // pop(return and remove) highest_stream_id
             for i in 0..self.flushable.len() {
@@ -372,7 +370,7 @@ impl StreamMap {
         }
     }
 
-    pub fn get_block_string(&self, id: u64) -> String {
+    pub fn get_block(&self, id: u64) -> Block {
         let block = self.get(id).unwrap();
         let create_time = match block
             .send
@@ -383,15 +381,14 @@ impl StreamMap {
             Ok(n) => n.as_millis(),
             Err(_) => panic!("SystemTime before UNIX EPOCH!"),
         };
-        format!(
-            "{} {} {} {} {} {} ",
-            id,
-            block.send.deadline,
-            block.send.priority,
-            create_time,
-            block.send.block_size(),
-            block.send.len,
-        )
+        Block {
+            block_id: id,
+            block_deadline: block.send.deadline,
+            block_priority: block.send.priority,
+            block_create_time: create_time as u64,
+            block_size: block.send.block_size(),
+            remaining_size: block.send.len,
+        }
     }
 
     // pub fn is_better(&self, best_block_id: u64, id: u64) -> bool {
