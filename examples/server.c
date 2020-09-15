@@ -543,6 +543,8 @@ static void timeout_cb(EV_P_ ev_timer *w, int revents) {
 }
 
 int main(int argc, char *argv[]) {
+    fprintf(stderr, "server start,  timestamp: %lu\n",
+            getCurrentUsec() / 1000 / 1000);
     const char *host = argv[1];
     const char *port = argv[2];
     dtp_cfg_fname = argv[3];
