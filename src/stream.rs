@@ -355,18 +355,25 @@ impl StreamMap {
                 let block = self.get_block(id);
                 blocks_vec.push(block);
             }
-            let best_block_id =
-                Some(select_block(&mut blocks_vec, next_packet_id, current_time));
-            // info!("best_test_id: {}",best_test_id);
-            // pop(return and remove) highest_stream_id
-            for i in 0..self.flushable.len() {
-                let &id = self.flushable.get(i).unwrap();
-                if Some(id) == best_block_id {
-                    self.flushable.swap_remove_front(i);
-                    break;
+            if blocks_vec.is_empty() {
+                Ok(None)
+            } else {
+                let best_block_id = Some(select_block(
+                    &mut blocks_vec,
+                    next_packet_id,
+                    current_time,
+                ));
+                // info!("best_test_id: {}",best_test_id);
+                // pop(return and remove) highest_stream_id
+                for i in 0..self.flushable.len() {
+                    let &id = self.flushable.get(i).unwrap();
+                    if Some(id) == best_block_id {
+                        self.flushable.swap_remove_front(i);
+                        break;
+                    }
                 }
+                Ok(best_block_id)
             }
-            Ok(best_block_id)
         }
     }
 
