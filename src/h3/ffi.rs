@@ -111,6 +111,7 @@ pub extern fn quiche_h3_event_type(ev: &h3::Event) -> u32 {
 }
 
 #[no_mangle]
+#[allow(improper_ctypes_definitions)]
 pub extern fn quiche_h3_event_for_each_header(
     ev: &h3::Event,
     cb: fn(

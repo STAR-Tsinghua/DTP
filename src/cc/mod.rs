@@ -47,6 +47,7 @@ pub const LOSS_REDUCTION_FACTOR: f64 = 0.5;
 ///
 /// This enum provides currently available list of congestion control
 /// algorithms.
+#[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Algorithm {
     /// Reno congestion control algorithm (default). `reno` in a string form.
