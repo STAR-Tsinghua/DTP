@@ -439,6 +439,7 @@ impl StreamMap {
         stream.send.shutdown()?;
         // Once shutdown, the stream is guaranteed to be non-writable.
         self.mark_writable(stream_id, false);
+        eprintln!("block {} miss deadline, canceled\n", stream_id);
         info!(
             "cancel block {},len of streams: {}",
             stream_id,
