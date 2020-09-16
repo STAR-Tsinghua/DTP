@@ -39,7 +39,7 @@ http3-client: http3-client.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 http3-server: http3-server.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
 
-$(LIB_DIR)/libquiche.a: $(shell find $(SOURCE_DIR) -type f -name '*.rs') $(AITRANS_DIR)/pre_solution.cxx $(AITRANS_DIR)/solution.cxx $(AITRANS_LIB_DIR)/pre_solution.hxx
+$(LIB_DIR)/libquiche.a: $(shell find $(SOURCE_DIR) -type f -name '*.rs') $(AITRANS_DIR)/pre_solution.cxx $(AITRANS_LIB_DIR)/pre_solution.hxx
 	cd .. && cargo build --release --target-dir $(BUILD_DIR)
 
 clean:
