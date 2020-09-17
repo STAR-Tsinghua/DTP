@@ -4,3 +4,5 @@ aitrans-server/log/*
 aitrans-server/trace/*
 TC/*
 cert.*
+*/lib
+*/log
