@@ -6,3 +6,4 @@ TC/*
 cert.*
 */lib
 */log
+libtorch
