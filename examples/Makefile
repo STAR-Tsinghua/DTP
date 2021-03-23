@@ -22,22 +22,23 @@ LDFLAGS = -L$(LIBCRYPTO_DIR) -L$(LIBSSL_DIR) -L$(LIB_DIR)
 LIBS = $(LIB_DIR)/libquiche.a -lev -ldl -pthread -lm -lsolution
 CPPFLAGS =  -lstdc++
 
-all: client client_trace server http3-client http3-server
+all: server
 
-client: client.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
-	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
+image_test: build
+	cd ../docker && ./image_test.sh
 
-client_trace: client_trace.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
-	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
+build: pre_docker
+	cd ../docker && ./build_image.sh
 
-server: server.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a dtp_config.h
+pre_docker: server
+	cd ../docker && ./pre_docker.sh
+
+server: server.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a dtp_config.h $(LIB_DIR)/libsolution.so
 	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS) $(CPPFLAGS)
 
-http3-client: http3-client.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
-	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
-
-http3-server: http3-server.c $(INCLUDE_DIR)/quiche.h $(LIB_DIR)/libquiche.a
-	$(CC) $(CFLAGS) $(LDFLAGS) $< -o $@ $(INCS) $(LIBS)
+$(LIB_DIR)/libsolution.so: $(AITRANS_DIR)/solution.cxx $(AITRANS_LIB_DIR)/solution.hxx
+	cd $(AITRANS_DIR) && g++ -shared -fPIC solution.cxx -I include -o libsolution.so
+	mv $(AITRANS_DIR)/libsolution.so $(LIB_DIR)/libsolution.so
 
 $(LIB_DIR)/libquiche.a: $(shell find $(SOURCE_DIR) -type f -name '*.rs') $(AITRANS_DIR)/pre_solution.cxx $(AITRANS_LIB_DIR)/pre_solution.hxx
 	cd .. && cargo build --release --target-dir $(BUILD_DIR)
