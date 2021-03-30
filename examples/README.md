@@ -1,40 +1,18 @@
-How to build C examples
------------------------
+# AItransDTP server 开发
 
-### Requirements
+AItransDTP 的 examples 目录基本上只用于测试开发 server 
 
-You will need the following libraries to build the C examples in this directory.
-You can use your OS package manager (brew, apt, pkg, ...) or install them from
-source.
+## dtp_config.h
 
-- [libev](http://software.schmorp.de/pkg/libev.html)
-- [uthash](https://troydhanson.github.io/uthash/)
+提供了可以用于解析 block_trace 的信息的函数，给出了 block_trace 的数据结构，具体可以查看下表。
 
-### Build
+| Time(s)  | Deadline(ms) | Block size(Bytes) | Priority |
+| -------- | ------------ | ----------------- | -------- |
+| 0.0      | 200          | 8295              | 2        |
+| 0.021333 | 200          | 2560              | 1        |
+| ……       | ……           | ……                | ……       |
 
-Simply run `make` in this directory.
-
-```
-% make clean
-% make
-```
-
-Examples Docker image
----------------------
-You can experiment with [http3-client](http3-client.rs),
-[http3-server](http3-server.rs), [client](client.rs) and [server](server.rs)
-using Docker.
-
-The Examples [Dockerfile](Dockerfile) builds a Debian image.
-
-To build:
-
-```
-docker build -t cloudflare-quiche .
-```
-
-To make an HTTP/3 request:
-
-```
-docker run -it cloudflare-quiche http3-client https://cloudflare-quic.com
-```
+- time : 该block的创建时间与上一个block的创建时间之差；
+- Deadline ： 该block的有效时间；
+- Block size ： 该block的总大小；
+- Priority ： 该block的优先级。

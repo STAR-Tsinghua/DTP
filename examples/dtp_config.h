@@ -23,7 +23,7 @@ typedef struct dtp_config dtp_config;
 
 
 
-// return: config array
+// return: config array, you need to release it manually
 // number: return the number of parsed dtp_config (MAX=10).
 struct dtp_config* parse_dtp_config(const char *filename, int *number)
 {

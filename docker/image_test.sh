@@ -1,3 +1,4 @@
+#!/bin/bash
 sudo docker stop aitrans_server
 sudo docker stop aitrans_client
 sudo docker rm aitrans_server
