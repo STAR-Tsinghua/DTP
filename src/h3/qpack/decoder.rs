@@ -127,7 +127,7 @@ impl Decoder {
                         .ok_or(Error::HeaderListTooLarge)?;
 
                     out.push(Header::new(&name, &value));
-                },
+                }
 
                 Representation::IndexedWithPostBase => {
                     let index = decode_int(&mut b, 4)?;
@@ -136,7 +136,7 @@ impl Decoder {
 
                     // TODO: implement dynamic table
                     return Err(Error::InvalidHeaderValue);
-                },
+                }
 
                 Representation::Literal => {
                     let name_huff = b.as_ref()[0] & 0x08 == 0x08;
@@ -164,7 +164,7 @@ impl Decoder {
                         .ok_or(Error::HeaderListTooLarge)?;
 
                     out.push(Header::new(&name, &value));
-                },
+                }
 
                 Representation::LiteralWithNameRef => {
                     const STATIC: u8 = 0x10;
@@ -192,14 +192,14 @@ impl Decoder {
                         .ok_or(Error::HeaderListTooLarge)?;
 
                     out.push(Header::new(name, &value));
-                },
+                }
 
                 Representation::LiteralWithPostBase => {
                     trace!("Literal With Post Base");
 
                     // TODO: implement dynamic table
                     return Err(Error::InvalidHeaderValue);
-                },
+                }
             }
         }
 

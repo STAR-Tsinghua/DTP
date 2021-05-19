@@ -23,7 +23,6 @@
 // LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#![allow(dead_code)]
 
 use std::cmp;
 
@@ -32,69 +31,27 @@ use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
-use std::time::{
-    Instant,
-    SystemTime,
-};
+use std::time::SystemTime;
 
 use crate::Error;
 use crate::Result;
 
 use crate::ranges;
 
-use std::mem;
-
 const MAX_WRITE_SIZE: usize = 1000;
 
 pub const MAX_DEADLINE: u64 = 9999999;
-pub const DEFAULT_PRIORITY: u64 = 9999999;
+pub const DEFAULT_PRIORITY: u64 = 2;
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct Block {
-    pub block_id: u64,
-    pub block_deadline: u64,
-    pub block_priority: u64,
-    pub block_create_time: u64,
-    pub block_size: u64,
-    pub remaining_size: u64,
-}
+// pub const MIN_ARRIVAL: f64 = 0.0;
+const MAXNUM_PRIORITY_QUEUE: usize = 3; //Num of priority queues
 
-extern {
-    fn SolutionSelectBlock(
-        blocks: *const Block, block_num: u64, next_packet_id: u64,
-        current_time: u64,
-    ) -> u64;
+const MAX_SEND_TIME: f64 = 1000000.0;
+/// Blocks are all assigned or will miss deadline.
+const NONE_BLOCK: u64 = 0;
+/// Miss deadline
+// const MISS_DDL: f64 = -10000000.0;
 
-    fn SolutionShouldDropBlock(block: *const Block, bandwidth: libc::c_double, rtt: libc::c_double, next_packet_id: u64, current_time: u64) -> bool;
-}
-
-/// Schedulor implementation
-///
-/// Decide which block to send next in blocks_vec
-/// 
-/// If defined feature "interface", then use C implementation of select blocks
-///
-/// Or this function implements a basic version of block selection
-pub fn select_block(
-    blocks_vec: &mut Vec<Block>, next_packet_id: u64, current_time: u64,
-) -> u64 {
-    blocks_vec.shrink_to_fit();
-    let blocks = blocks_vec.as_mut_ptr();
-    let block_num = blocks_vec.len() as u64;
-    mem::forget(blocks_vec);
-    return unsafe { SolutionSelectBlock(blocks, block_num, next_packet_id, current_time) };
-}
-
-/// Drop block discriminative function
-///
-/// Decide whether a block should be dropped by the sender
-pub fn should_drop_block(
-    block: &mut Block, 
-    bandwidth: f64, rtt:f64, next_packet_id: u64, current_time: u64
-) -> bool {
-    unsafe { SolutionShouldDropBlock(block, bandwidth, rtt, next_packet_id, current_time) }        
-}
 /// Keeps track of QUIC streams and enforces stream limits.
 #[derive(Default)]
 pub struct StreamMap {
@@ -139,7 +96,7 @@ pub struct StreamMap {
     /// enough flow control credits to send at least some of that data.
     ///
     /// Streams are added to the back of the list, and removed from the front.
-    flushable: VecDeque<u64>,
+    pub flushable: VecDeque<u64>,
 
     /// Set of stream IDs corresponding to streams that have outstanding data
     /// to read. This is used to generate a `StreamIter` of streams without
@@ -154,13 +111,7 @@ pub struct StreamMap {
 
     /// Set of stream IDs corresponding to blocks that have been canceled
     /// because of having missed deadline.
-    /// insert when canceled, remove when reset frame sended.
     canceled: HashSet<u64>,
-
-    /// Set of stream IDs corresponding to blocks that have been canceled
-    /// because of having missed deadline.Use for dependency
-    /// insert when canceled, todo: remove
-    canceled_depend: HashSet<u64>,
 
     /// Set of stream IDs corresponding to streams that are almost out of flow
     /// control credit and need to send MAX_STREAM_DATA. This is used to
@@ -168,11 +119,18 @@ pub struct StreamMap {
     /// full list of streams.
     almost_full: HashSet<u64>,
 
+    /// when change block to send, update this
+    // last_highest_stream_id: u64,
+
     /// weight of priority when compute update_real_priority.
     priority_weight: Option<f64>,
 
     /// min priority of app
     min_priority: Option<u64>,
+
+    /// Priority queues
+    /// There are strict priorities between different queues.
+    pub priority_queues: [VecDeque<u64>; MAXNUM_PRIORITY_QUEUE],
 }
 
 impl StreamMap {
@@ -183,6 +141,8 @@ impl StreamMap {
 
             local_max_streams_uni: max_streams_uni,
             local_max_streams_uni_next: max_streams_uni,
+
+            priority_queues: [VecDeque::new(), VecDeque::new(), VecDeque::new()],
 
             ..StreamMap::default()
         }
@@ -199,8 +159,8 @@ impl StreamMap {
     }
 
     /// Set priority weight
-    pub fn set_priority_weight(&mut self, priority_weight: f64) {
-        self.priority_weight = Some(priority_weight);
+    pub fn set_weight(&mut self, weight: f64) {
+        self.priority_weight = Some(weight);
     }
 
     /// Set min priority of this app
@@ -223,7 +183,7 @@ impl StreamMap {
     pub(crate) fn get_or_create(
         &mut self, id: u64, local_params: &crate::TransportParams,
         peer_params: &crate::TransportParams, local: bool, is_server: bool,
-        deadline: u64, priority: u64, depend_id: u64,
+        deadline: u64, priority: u64,
     ) -> Result<&mut Stream> {
         let stream = match self.streams.entry(id) {
             hash_map::Entry::Vacant(v) => {
@@ -253,51 +213,52 @@ impl StreamMap {
                     ),
 
                     // Remotely-initiated unidirectional stream.
-                    (false, false) =>
-                        (local_params.initial_max_stream_data_uni, 0),
+                    (false, false) => {
+                        (local_params.initial_max_stream_data_uni, 0)
+                    }
                 };
 
                 // Enforce stream count limits.
                 match (is_local(id, is_server), is_bidi(id)) {
                     (true, true) => {
-                        if self.local_opened_streams_bidi >=
-                            self.peer_max_streams_bidi
+                        if self.local_opened_streams_bidi
+                            >= self.peer_max_streams_bidi
                         {
                             return Err(Error::StreamLimit);
                         }
 
                         self.local_opened_streams_bidi += 1;
-                    },
+                    }
 
                     (true, false) => {
-                        if self.local_opened_streams_uni >=
-                            self.peer_max_streams_uni
+                        if self.local_opened_streams_uni
+                            >= self.peer_max_streams_uni
                         {
                             return Err(Error::StreamLimit);
                         }
 
                         self.local_opened_streams_uni += 1;
-                    },
+                    }
 
                     (false, true) => {
-                        if self.peer_opened_streams_bidi >=
-                            self.local_max_streams_bidi
+                        if self.peer_opened_streams_bidi
+                            >= self.local_max_streams_bidi
                         {
                             return Err(Error::StreamLimit);
                         }
 
                         self.peer_opened_streams_bidi += 1;
-                    },
+                    }
 
                     (false, false) => {
-                        if self.peer_opened_streams_uni >=
-                            self.local_max_streams_uni
+                        if self.peer_opened_streams_uni
+                            >= self.local_max_streams_uni
                         {
                             return Err(Error::StreamLimit);
                         }
 
                         self.peer_opened_streams_uni += 1;
-                    },
+                    }
                 };
 
                 let s = Stream::new_full(
@@ -307,10 +268,9 @@ impl StreamMap {
                     local,
                     deadline,
                     priority,
-                    depend_id,
                 );
                 v.insert(s)
-            },
+            }
 
             hash_map::Entry::Occupied(v) => v.into_mut(),
         };
@@ -331,14 +291,12 @@ impl StreamMap {
     /// Queueing a stream multiple times simultaneously means that it might be
     /// unfairly scheduled more often than other streams, and might also cause
     /// spurious cycles through the queue, so it should be avoided.
-    pub fn push_flushable(&mut self, stream_id: u64) {
+    pub fn push_flushable(&mut self, stream_id: u64, priority: u64) {
         self.flushable.push_back(stream_id);
+        // Besides push in the flushable, push in the priority queues.
+        info!("push_flushable");
+        self.priority_queues[priority as usize].push_back(stream_id);
     }
-
-    // /// todo: return sum of losted depend blocks' weight
-    // pub fn check_depend(&self, stream_id: u64) -> bool {
-    //     self.is_canceled(stream_id)
-    // }
 
     /// Removes and returns the first stream ID from the flushable streams
     /// queue.
@@ -346,114 +304,71 @@ impl StreamMap {
     /// Note that if the stream is still flushable after sending some of its
     /// outstanding data, it needs to be added back to the queu.
     /// Return the stream with highest real priority value
-    pub fn pop_flushable(
-        &mut self, _bandwidth: f64, _rtt: f64, _current_time: u64,
-    ) -> Result<Option<u64>> {
-        Ok(self.flushable.pop_front())
-    }
-
-    pub fn peek_flushable(
-        &mut self, bandwidth: f64, rtt: f64, next_packet_id: u64,
-        current_time: u64,
-    ) -> Result<Option<u64>> {
-        if !self.has_flushable() {
-            Ok(None)
-        } else {
-            // let mut best_block_id: Option<u64> = None;
-            let mut blocks_vec = vec![];
-            for i in (0..self.flushable.len()).rev() {
-                let &id = self.flushable.get(i).unwrap();
-                // check if need to cancel this block
-                // let stream = self.get(id).unwrap();
-                // let passed_time =
-                //     stream.send.start_instant.unwrap().elapsed().as_millis();
-                // create block structure for C++
-                let mut block = self.get_block(id);
-                if should_drop_block(&mut block, bandwidth, rtt, next_packet_id, current_time) {
-                    self.cancel_block(id)?;
-                    // Block canceled, so non-flushable
-                    trace!(
-                        "flushable.remove block {}",
-                        self.flushable.get(i).unwrap()
-                    );
-                    self.flushable.swap_remove_back(i);
-                    continue;
-                }
-                // add the block struct to blocks, and used by C++ code later
-                blocks_vec.push(block);
-            }
-            if blocks_vec.is_empty() {
-                Ok(None)
-            } else {
-                let best_block_id = Some(select_block(
-                    &mut blocks_vec,
-                    next_packet_id,
-                    current_time,
-                ));
-                // info!("best_test_id: {}",best_test_id);
-                // pop(return and remove) highest_stream_id
-                for i in 0..self.flushable.len() {
-                    let &id = self.flushable.get(i).unwrap();
-                    if Some(id) == best_block_id {
-                        self.flushable.swap_remove_front(i);
-                        break;
-                    }
-                }
-                Ok(best_block_id)
-            }
-        }
-    }
-
-    pub fn get_block(&self, id: u64) -> Block {
-        let block = self.get(id).unwrap();
-        let create_time = match block
-            .send
-            .start_time
-            .unwrap()
-            .duration_since(SystemTime::UNIX_EPOCH)
-        {
-            Ok(n) => n.as_millis(),
-            Err(_) => panic!("SystemTime before UNIX EPOCH!"),
-        };
-        Block {
-            block_id: id,
-            block_deadline: block.send.deadline,
-            block_priority: block.send.priority,
-            block_create_time: create_time as u64,
-            block_size: block.send.block_size(),
-            remaining_size: block.send.len,
-        }
-    }
-
-    // pub fn is_better(&self, best_block_id: u64, id: u64) -> bool {
-    //     let best_block = self.get(best_block_id).unwrap();
-    //     let block = self.get(id).unwrap();
-    //     let best_block_create_time = best_block.send.start_time.unwrap();
-    //     let block_create_time = block.send.start_time.unwrap();
-    //     let current_time = SystemTime::now();
-    //     // if block has miss ddl
-    //     let block_passed_time =
-    //         match current_time.duration_since(block_create_time) {
-    //             Ok(n) => n.as_millis(),
-    //             Err(_) => panic!("SystemTime before start time!"),
+    // pub fn peek_flushable(
+    //     &mut self, bandwidth_f: f64, bandwidth_s: f64, rtt: f64,
+    // ) -> Result<Option<u64>> {
+    //     if !self.has_flushable() {
+    //         Ok(None)
+    //     } else {
+    //         let mut highest_stream_id = 0;
+    //         let mut highest_stream_priority = 9999.0; // MIN_REAL_PRIORITY
+    //         let weight = match self.priority_weight {
+    //             Some(v) => v,
+    //             None => 0.5,
     //         };
-    //     if block_passed_time as u64 > block.send.deadline {
-    //         return false;
-    //     }
-    //     // if best block has miss ddl
-    //     let best_block_passed_time =
-    //         match current_time.duration_since(best_block_create_time) {
-    //             Ok(n) => n.as_millis(),
-    //             Err(_) => panic!("SystemTime before start time!"),
+    //         let min_priority = match self.min_priority {
+    //             Some(v) => v,
+    //             None => 2,
     //         };
-    //     if best_block_passed_time as u64 > best_block.send.deadline {
-    //         return true;
+    //         for i in (0..self.flushable.len()).rev() {
+    //             let &id = self.flushable.get(i).unwrap();
+    //             let stream = self.get_mut(id).unwrap();
+    //             let stream_priority = match stream.update_real_priority(
+    //                 bandwidth_f + bandwidth_s,
+    //                 rtt,
+    //                 weight,
+    //                 min_priority,
+    //             ) {
+    //                 Some(v) => v,
+    //                 None => {
+    //                     self.cancel_block(id)?;
+    //                     // Block canceled, so non-flushable
+    //                     info!(
+    //                         "flushable.remove block {}",
+    //                         self.flushable.get(i).unwrap()
+    //                     );
+    //                     self.flushable.swap_remove_back(i);
+    //                     continue;
+    //                 }
+    //             };
+    //             if stream_priority <= highest_stream_priority {
+    //                 highest_stream_priority = stream_priority;
+    //                 highest_stream_id = id;
+    //             }
+    //         }
+    //         // pop(return and remove) highest_stream_id
+    //         for i in 0..self.flushable.len() {
+    //             let &id = self.flushable.get(i).unwrap();
+    //             if id == highest_stream_id {
+    //                 self.flushable.swap_remove_front(i);
+    //                 break;
+    //             }
+    //         }
+    //         // when change block sended
+    //         if highest_stream_id != self.last_highest_stream_id {
+    //             info!("Now send block {}", highest_stream_id);
+    //             // Determine if the order has changed
+    //             for i in 0..self.flushable.len() {
+    //                 let &id = self.flushable.get(i).unwrap();
+    //                 if id < highest_stream_id {
+    //                     info!("reorder event, {} hasn't finished", id);
+    //                     break;
+    //                 }
+    //             }
+    //         }
+    //         self.last_highest_stream_id = highest_stream_id;
+    //         Ok(Some(highest_stream_id))
     //     }
-    //     if best_block_create_time != block_create_time {
-    //         return best_block_create_time > block_create_time;
-    //     }
-    //     return best_block_passed_time as u64 * best_block.send.deadline >
-    //         block_passed_time as u64 * block.send.deadline;
     // }
 
     /// cancel this block
@@ -462,12 +377,10 @@ impl StreamMap {
         // add id into Set of canceled, will send RESET_STREAM of this IDs in
         // lib::send
         self.canceled.insert(stream_id);
-        self.canceled_depend.insert(stream_id);
         stream.send.shutdown()?;
         // Once shutdown, the stream is guaranteed to be non-writable.
         self.mark_writable(stream_id, false);
-        eprintln!("block {} miss deadline, canceled\n", stream_id);
-        debug!(
+        info!(
             "cancel block {},len of streams: {}",
             stream_id,
             self.streams.len()
@@ -480,9 +393,13 @@ impl StreamMap {
     /// If the stream was already in the list, this does nothing.
     pub fn mark_readable(&mut self, stream_id: u64, readable: bool) {
         if readable {
-            self.readable.insert(stream_id);
+            info!("mark readable {}", stream_id);
+            let success = self.readable.insert(stream_id);
+            info!("insert success,mark success: {}", success);
         } else {
-            self.readable.remove(&stream_id);
+            info!("mark unreadable {}", stream_id);
+            let remove = self.readable.remove(&stream_id);
+            info!("remove success,mark success: {}", remove);
         }
     }
 
@@ -499,11 +416,6 @@ impl StreamMap {
             self.writable.remove(&stream_id);
         }
     }
-
-    // /// return ture if block has already been canceled
-    // pub fn is_canceled(&self, stream_id: u64) -> bool {
-    //     self.canceled_depend.contains(&stream_id)
-    // }
 
     /// Adds or removes the stream ID to/from the canceled streams set.
     ///
@@ -610,24 +522,339 @@ impl StreamMap {
     /// Returns true if the max bidirectional streams count needs to be updated
     /// by sending a MAX_STREAMS frame to the peer.
     pub fn should_update_max_streams_bidi(&self) -> bool {
-        self.local_max_streams_bidi_next != self.local_max_streams_bidi &&
-            self.local_max_streams_bidi_next / 2 >
-                self.local_max_streams_bidi - self.peer_opened_streams_bidi
+        self.local_max_streams_bidi_next != self.local_max_streams_bidi
+            && self.local_max_streams_bidi_next / 2
+                > self.local_max_streams_bidi - self.peer_opened_streams_bidi
     }
 
     /// Returns true if the max unidirectional streams count needs to be updated
     /// by sending a MAX_STREAMS frame to the peer.
     pub fn should_update_max_streams_uni(&self) -> bool {
-        self.local_max_streams_uni_next != self.local_max_streams_uni &&
-            self.local_max_streams_uni_next / 2 >
-                self.local_max_streams_uni - self.peer_opened_streams_uni
+        self.local_max_streams_uni_next != self.local_max_streams_uni
+            && self.local_max_streams_uni_next / 2
+                > self.local_max_streams_uni - self.peer_opened_streams_uni
     }
 
     /// Returns the number of active streams in the map.
-    #[cfg(test)]
+    // #[cfg(test)]
     pub fn len(&self) -> usize {
         self.streams.len()
     }
+
+    // pub fn priority_queues_flushable(&self, strict_queue: usize) -> StreamIter {
+    //     StreamIter::from(&self.priority_queues[strict_queue])
+    // }
+
+    // MP: calculate send time and get max send time
+    pub fn get_max_send_time(
+        &mut self, bandwidth_f: f64, bandwidth_s: f64, owd_f: f64, owd_s: f64,
+        occupied_t_f: f64, occupied_t_s: f64,
+    ) -> Result<Vec<f64>> {
+        let mut max_send_time_on_first_path: f64 = 0.0;
+        let mut max_send_time_on_subseq_path: f64 = 0.0;
+
+        let mut cancel_set: HashSet<u64> = HashSet::new();
+
+        for strict_queue in 0..MAXNUM_PRIORITY_QUEUE {
+            for i in 0..self.priority_queues[strict_queue].len() {
+                // info!("qu len {}", self.priority_queues[strict_queue].len());
+                let id: u64;
+                match self.priority_queues[strict_queue].get(i) {
+                    Some(x) => id = *x,
+                    None => {
+                        info!("get priority_queues none");
+                        continue;
+                    }
+                };
+                // let &id = self.priority_queues[strict_queue].get(i);
+                let stream = self.get_mut(id).unwrap();
+                info!("id: {}", id);
+                let passed_time;
+                match SystemTime::now()
+                    .duration_since(stream.send.start_time.unwrap())
+                {
+                    Ok(n) => passed_time = n.as_millis(),
+                    Err(_) => panic!("SystemTime before start time!"),
+                }
+                if passed_time as u64 > stream.send.deadline {
+                    // cancel block
+                    info!("passed_time > deadline");
+                    // let pq = stream.send.priority as usize;
+                    self.cancel_block(id)?;
+                    self.flushable.swap_remove_back(i);
+                    cancel_set.insert(id);
+
+                    // self.priority_queues[pq].remove(i);
+                    // info!(
+                    //     "qu len after cancel {}",
+                    //     self.priority_queues[strict_queue].len()
+                    // );
+                    continue;
+                }
+
+                if stream.assigned == true {
+                    continue;
+                }
+
+                let m = owd_f + occupied_t_f;
+                let n = owd_s + occupied_t_s;
+                info!("m {} n {}", m, n);
+                let size_tmp = bandwidth_f * stream.send.len as f64 / 1000.0
+                    + (n - m) * bandwidth_f * bandwidth_s;
+                info!("size_tmp {}", size_tmp);
+                let mut size_first =
+                    (size_tmp / (bandwidth_f + bandwidth_s)) as u64 * 1000;
+                info!("size_first {}", size_first);
+                if size_first < 0 as u64 {
+                    size_first = 0;
+                }
+                if size_first > stream.send.len {
+                    size_first = stream.send.len;
+                }
+                let size_sec = stream.send.len - size_first; //bytes
+                let send_time_f = size_first as f64 / bandwidth_f / 1000.0; //ms
+                let send_time_s = size_sec as f64 / bandwidth_s / 1000.0;
+
+                stream.send_time[0] = send_time_f;
+                stream.send_time[1] = send_time_s;
+
+                info!("send_time_f {}, send_time_s {}", send_time_f, send_time_s);
+
+                let complete_time_f =
+                    passed_time as f64 + occupied_t_f + send_time_f + owd_f;
+                let complete_time_s =
+                    passed_time as f64 + occupied_t_s + send_time_s + owd_s;
+                let complete_t = complete_time_f.min(complete_time_s);
+                if complete_t > stream.send.deadline as f64 {
+                    //Under the current network condition, blocks will miss ddl
+                    // stream.send_time[0] = MISS_DDL;
+                    // stream.send_time[1] = MISS_DDL;
+                    stream.predicted_missddl = true;
+                    info!("MISS DDL");
+                    continue;
+                }
+
+                if stream.send_time[0] + occupied_t_f
+                    > max_send_time_on_first_path
+                    && stream.send_time[1] + occupied_t_s
+                        > max_send_time_on_subseq_path
+                {
+                    info!("max_send_time");
+                    max_send_time_on_first_path =
+                        stream.send_time[0] + occupied_t_f;
+                    max_send_time_on_subseq_path =
+                        stream.send_time[1] + occupied_t_s;
+                }
+            }
+        }
+
+        for cancel_id in cancel_set.iter() {
+            for strict_queue in 0..MAXNUM_PRIORITY_QUEUE {
+                for i in 0..self.priority_queues[strict_queue].len() {
+                    match self.priority_queues[strict_queue].get(i) {
+                        Some(v) => {
+                            // info!("id {}", *v);
+                            if v == cancel_id {
+                                info!("remove {}", cancel_id);
+                                self.priority_queues[strict_queue].remove(i);
+                                break;
+                            }
+                        }
+                        None => {
+                            info!("get priority_queues none");
+                            continue;
+                        }
+                    };
+                }
+            }
+        }
+
+        info!("test remove");
+
+        for strict_queue in 0..MAXNUM_PRIORITY_QUEUE {
+            for i in 0..self.priority_queues[strict_queue].len() {
+                match self.priority_queues[strict_queue].get(i) {
+                    Some(v) => {
+                        info!("id {}", *v);
+                    }
+                    None => {
+                        info!("get priority_queues none");
+                        continue;
+                    }
+                };
+            }
+        }
+
+        let send_times =
+            vec![max_send_time_on_first_path, max_send_time_on_subseq_path];
+
+        info!("sendtimes: {}, {}", send_times[0], send_times[1]);
+        Ok(send_times)
+    }
+    /// Choose the stream with min send time.
+    /// If the streams are identical, choose the stream that came first.
+    pub fn peek_flushable_mp(
+        &mut self, bandwidth_f: f64, bandwidth_s: f64, owd_f: f64, owd_s: f64,
+        occupied_t_f: f64, occupied_t_s: f64,
+    ) -> Option<u64> {
+        info!(
+            "bw_f: {}, bw_s: {}, owd_f: {}, owd_s:{}",
+            bandwidth_f, bandwidth_s, owd_f, owd_s
+        );
+
+        if self.priority_queues[0].is_empty()
+            && self.priority_queues[1].is_empty()
+            && self.priority_queues[2].is_empty()
+        {
+            info!("Queues are empty.");
+            return None;
+        } else {
+            let send_times;
+            match self.get_max_send_time(
+                bandwidth_f,
+                bandwidth_s,
+                owd_f,
+                owd_s,
+                occupied_t_f,
+                occupied_t_s,
+            ) {
+                Ok(n) => send_times = n,
+                Err(_) => panic!("Not get max send time!"),
+            }
+
+            info!(
+                "send_time_f: {}, send_time_s: {}",
+                send_times[0], send_times[1]
+            );
+
+            // The block with the smallest sending time and the occupied time
+            // among the blocks that can't wait.
+            let mut min_stream_id = NONE_BLOCK;
+            let mut min_send_time: f64 = MAX_SEND_TIME;
+            // The block with the smallest sending time and the occupied time
+            // among the blocks that can wait.
+            let mut can_wait_min_stream_id = NONE_BLOCK;
+            let mut can_wait_min_send_time: f64 = MAX_SEND_TIME;
+            // The block with the smallest sending time and the occupied time
+            // among the blocks that miss ddl.
+            let mut missddl_min_stream_id = NONE_BLOCK;
+            let mut has_block_miss_ddl: bool = false;
+
+            // Whether there is a block that is not scheduled and can meet the deadline.
+            let mut blocks_unassigned_meetddl: bool = false;
+            // Whether all blocks can wait for the next schedule.
+            let mut all_blocks_can_wait: bool = true;
+
+            for strict_queue in 0..MAXNUM_PRIORITY_QUEUE {
+                for i in 0..self.priority_queues[strict_queue].len() {
+                    let id: u64;
+                    match self.priority_queues[strict_queue].get(i) {
+                        Some(x) => id = *x,
+                        None => {
+                            info!("get priority_queues none 2");
+                            continue;
+                        }
+                    }
+                    // let &id = self.priority_queues[strict_queue].get(i).unwrap();
+                    let stream = self.get(id).unwrap();
+
+                    if stream.assigned == true {
+                        continue;
+                    }
+
+                    if stream.predicted_missddl {
+                        has_block_miss_ddl = true;
+                        continue;
+                    }
+
+                    blocks_unassigned_meetddl = true;
+                    info!("Stream: {} not assigned", id);
+
+                    let passed;
+                    match SystemTime::now()
+                        .duration_since(stream.send.start_time.unwrap())
+                    {
+                        Ok(n) => passed = n.as_millis(),
+                        Err(_) => panic!("SystemTime before start time!"),
+                    }
+                    // The time this block can wait.
+                    let can_wait_time = stream.send.deadline as f64
+                        - passed as f64
+                        - stream.send_time[0]
+                        - owd_f;
+                    // The time this block send.
+                    let sendt = stream.send_time[0]
+                        .min(stream.send_time[1]);
+                    // The time path being occupied.
+                    let smaller_send_time =
+                        send_times[0].min(send_times[1]);
+
+                    if can_wait_time > smaller_send_time {
+                        info!("stream: {} can wait in this turn", id);
+                        if sendt < can_wait_min_send_time {
+                            can_wait_min_send_time = sendt;
+                            can_wait_min_stream_id = id;
+                        }
+                    } else {
+                        info!("stream: {} can not wait in this turn", id);
+                        all_blocks_can_wait = false;
+                        if sendt < min_send_time {
+                            min_send_time = sendt;
+                            min_stream_id = id;
+                        }
+                    }
+                }
+                if min_send_time != MAX_SEND_TIME {
+                    break;
+                }
+            }
+            // There are blocks that meet the deadline and are not scheduled,
+            // and they can all wait for the next round of scheduling
+            if all_blocks_can_wait && blocks_unassigned_meetddl {
+                // Pick one among all blocks that can wait.
+                info!("All blocks that do not miss the deadline can wait.");
+                info!("Choose the block: {}", can_wait_min_stream_id);
+                return Some(can_wait_min_stream_id);
+            }
+            // All blocks in send buffer miss ddl.
+            // Choose the block with min size and high priority.
+            if min_send_time == MAX_SEND_TIME
+                && can_wait_min_send_time == MAX_SEND_TIME
+                && has_block_miss_ddl
+            {
+                let mut min_size: u64 = 10000000;
+                for strict_queue in 0..MAXNUM_PRIORITY_QUEUE {
+                    for i in 0..self.priority_queues[strict_queue].len() {
+                        let id: u64;
+                        match self.priority_queues[strict_queue].get(i) {
+                            Some(x) => id = *x,
+                            None => {
+                                info!("get priority_queues none 2");
+                                continue;
+                            }
+                        }
+
+                        let stream = self.get(id).unwrap();
+
+                        if stream.assigned == true {
+                            continue;
+                        }
+                        if stream.send.len < min_size {
+                            min_size = stream.send.len;
+                            missddl_min_stream_id = id;
+                        }
+                    }
+                    if min_size != 10000000 {
+                        break;
+                    }
+                }
+                return Some(missddl_min_stream_id);
+            }
+
+            info!("In peek_flushable_mp, stream id: {}", min_stream_id);
+            return Some(min_stream_id);
+        }
+    }     
 }
 
 /// A QUIC stream.
@@ -647,9 +874,62 @@ pub struct Stream {
 
     /// Application data.
     pub data: Option<Box<dyn std::any::Any>>,
+
+    /// Send time on each path.
+    /// -1 represent miss ddl.
+    pub send_time: Vec<f64>,
+
+    /// Whether it is scheduled in one schedule.
+    /// If scheduled, don't consider it again.
+    /// Deal with the case of selecting a block for the idle road.
+    pub assigned: bool,
+
+    /// The block is considered to miss ddl according to the predicted network condition.
+    pub predicted_missddl: bool,
+
+    /// Be Preemptive.
+    pub preem_num: u64,
 }
 
 impl Stream {
+    /// Update the real priority of the stream
+    /// if miss deadline , return None
+    // pub fn update_real_priority(
+    //     &self, bandwidth: f64, rtt: f64, a: f64, min_priority: u64,
+    // ) -> Option<f64> {
+    //     let passed_time = match SystemTime::now()
+    //         .duration_since(self.send.start_time.unwrap())
+    //     {
+    //         Ok(n) => n.as_millis(),
+    //         Err(_) => panic!("SystemTime before start time!"),
+    //     };
+    //     // info!("passed_time {}", passed_time);
+    //     if passed_time as u64 > self.send.deadline {
+    //         return None;
+    //     }
+    //     let mut remaining_time = self.send.deadline as f64
+    //         - passed_time as f64
+    //         - self.send.len as f64 / bandwidth
+    //         - rtt / 2.0;
+    //     let total_len = self.send.block_size();
+    //     let unsend_rate = self.send.len as f64 / total_len as f64;
+    //     let mut real_priority = 0.0;
+    //     if remaining_time < 0.0 {
+    //         // trace!("remaining_time={}", remaining_time);
+    //         remaining_time = remaining_time.abs().min(self.send.deadline as f64);
+    //         real_priority += 2.0; // REMAINING_TIME_REAL_PRIORITY;
+    //     }
+    //     let priority = self.send.priority.min(min_priority);
+    //     real_priority += a * priority as f64 / min_priority as f64
+    //         + (1.0 - a) * remaining_time / self.send.deadline as f64;
+    //     // trace!(
+    //     //     "unsend_rate={}, pre real_priority={}",
+    //     //     unsend_rate,
+    //     //     real_priority
+    //     // );
+    //     Some(unsend_rate * real_priority)
+    // }
+
     /// Creates a new stream with the given flow control limits.
     pub fn new(
         max_rx_data: u64, max_tx_data: u64, bidi: bool, local: bool,
@@ -660,20 +940,28 @@ impl Stream {
             bidi,
             local,
             data: None,
+            send_time: Vec::new(),
+            assigned: false,
+            predicted_missddl: false,
+            preem_num: 0,
         }
     }
 
     /// Creates a new stream with the given flow control limits.
     pub fn new_full(
         max_rx_data: u64, max_tx_data: u64, bidi: bool, local: bool,
-        deadline: u64, priority: u64, depend_id: u64,
+        deadline: u64, priority: u64,
     ) -> Stream {
         Stream {
             recv: RecvBuf::new(max_rx_data),
-            send: SendBuf::new_full(max_tx_data, deadline, priority, depend_id),
+            send: SendBuf::new_full(max_tx_data, deadline, priority),
             bidi,
             local,
             data: None,
+            send_time: vec![0.0, 0.0],
+            assigned: false,
+            predicted_missddl: false,
+            preem_num: 0,
         }
     }
 
@@ -685,9 +973,9 @@ impl Stream {
     /// Returns true if the stream has enough flow control capacity to be
     /// written to, and is not finished.
     pub fn is_writable(&self) -> bool {
-        !self.send.shutdown &&
-            !self.send.is_fin() &&
-            self.send.off < self.send.max_data
+        !self.send.shutdown
+            && !self.send.is_fin()
+            && self.send.off < self.send.max_data
     }
 
     /// Returns true if the stream has data to send and is allowed to send at
@@ -925,129 +1213,7 @@ impl RecvBuf {
 
             self.len = cmp::max(self.len, buf.max_off());
 
-            if self.bct <= self.block_deadline as i64 {
-                self.good_recv = self.len as usize;
-            }
-
-            self.data.push(buf);
-        }
-
-        Ok(())
-    }
-
-    // only use in evaluation, need stream_id because of goodbytes draw
-    pub fn push_evaluation(
-        &mut self, buf: RangeBuf, stream_id: Option<u64>,
-    ) -> Result<()> {
-        if buf.max_off() > self.max_data {
-            return Err(Error::FlowControl);
-        }
-
-        if let Some(fin_off) = self.fin_off {
-            // Stream's size is known, forbid data beyond that point.
-            if buf.max_off() > fin_off {
-                return Err(Error::FinalSize);
-            }
-
-            // Stream's size is already known, forbid changing it.
-            if buf.fin() && fin_off != buf.max_off() {
-                return Err(Error::FinalSize);
-            }
-        }
-
-        // Stream's known size is lower than data already received.
-        if buf.fin() && buf.max_off() < self.len {
-            return Err(Error::FinalSize);
-        }
-
-        // We already saved the final offset, so there's nothing else we
-        // need to keep from the RangeBuf if it's empty.
-        if self.fin_off.is_some() && buf.is_empty() {
-            return Ok(());
-        }
-
-        // No need to process an empty buffer with the fin flag, if we already
-        // know the final size.
-        if buf.fin() && buf.is_empty() && self.fin_off.is_some() {
-            return Ok(());
-        }
-
-        if buf.fin() {
-            self.fin_off = Some(buf.max_off());
-        }
-
-        // No need to store empty buffer that doesn't carry the fin flag.
-        if !buf.fin() && buf.is_empty() {
-            return Ok(());
-        }
-
-        // Check if data is fully duplicate, that is the buffer's max offset is
-        // lower or equal to the offset already stored in the recv buffer.
-        if self.off >= buf.max_off() {
-            // An exception is applied to empty range buffers, because an empty
-            // buffer's max offset matches the max offset of the recv buffer.
-            //
-            // By this point all spurious empty buffers should have already been
-            // discarded, so allowing empty buffers here should be safe.
-            if !buf.is_empty() {
-                return Ok(());
-            }
-        }
-
-        if self.drain {
-            return Ok(());
-        }
-
-        let mut tmp_buf = Some(buf);
-
-        while let Some(mut buf) = tmp_buf {
-            tmp_buf = None;
-
-            // Discard incoming data below current stream offset. Bytes up to
-            // `self.off` have already been received so we should not buffer
-            // them again. This is also important to make sure `ready()` doesn't
-            // get stuck when a buffer with lower offset than the stream's is
-            // buffered.
-            if self.off > buf.off() {
-                buf = buf.split_off((self.off - buf.off()) as usize);
-            }
-
-            for b in &self.data {
-                // New buffer is fully contained in existing buffer.
-                if buf.off() >= b.off() && buf.max_off() <= b.max_off() {
-                    return Ok(());
-                }
-
-                // New buffer's start overlaps existing buffer.
-                if buf.off() >= b.off() && buf.off() < b.max_off() {
-                    buf = buf.split_off((b.max_off() - buf.off()) as usize);
-                }
-
-                // New buffer's end overlaps existing buffer.
-                if buf.off() < b.off() && buf.max_off() > b.off() {
-                    tmp_buf = Some(buf.split_off((b.off() - buf.off()) as usize));
-                }
-            }
-
-            let now_timestamp =
-                match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-                    Ok(n) => n.as_millis(),
-                    Err(_) => panic!("SystemTime before UNIX EPOCH!"),
-                };
-
-            self.bct = now_timestamp as i64 - self.start_time as i64;
-
-            self.len = cmp::max(self.len, buf.max_off());
-
-            if self.bct <= 200 {
-                match stream_id {
-                    Some(id) => debug!(
-                        "goodbytes of stream {} add {} bytes",
-                        id,
-                        self.len as usize - self.good_recv
-                    ),
-                    _ => (),
-                }
+            if self.bct < self.block_deadline as i64 {
                 self.good_recv = self.len as usize;
             }
 
@@ -1151,9 +1317,9 @@ impl RecvBuf {
     pub fn almost_full(&self) -> bool {
         // Send MAX_STREAM_DATA when the new limit is at least double the
         // amount of data that can be received before blocking.
-        self.fin_off.is_none() &&
-            self.max_data_next != self.max_data &&
-            self.max_data_next / 2 > self.max_data - self.len
+        self.fin_off.is_none()
+            && self.max_data_next != self.max_data
+            && self.max_data_next / 2 > self.max_data - self.len
     }
 
     /// Returns true if the receive-side of the stream is complete.
@@ -1166,11 +1332,6 @@ impl RecvBuf {
         }
 
         false
-    }
-
-    /// Returns true if all data of the stream has been received.
-    pub fn all_received(&self) -> bool {
-        self.fin_off == Some(self.len)
     }
 
     /// Returns true if the stream has data to be read.
@@ -1245,14 +1406,10 @@ pub struct SendBuf {
 
     /// Priority of this block. The smaller the number, the higher the priority,
     /// 0 is the highest,
-    priority: u64,
+    pub priority: u64,
 
     /// Beginning timestamp of the block.
     start_time: Option<SystemTime>,
-
-    /// Beginning Instant of the block, Instant is a monotonically nondecreasing
-    /// clock.
-    start_instant: Option<Instant>,
 
     /// Ranges of data offsets that have been acked.
     acked: ranges::RangeSet,
@@ -1264,17 +1421,21 @@ pub struct SendBuf {
 impl SendBuf {
     /// Creates a new send buffer.
     fn new(max_data: u64) -> SendBuf {
-        Self::new_full(max_data, MAX_DEADLINE, DEFAULT_PRIORITY, 0)
-    }
-
-    /// Creates a new send buffer with deadline
-    fn new_full(
-        max_data: u64, deadline: u64, priority: u64, _depend_id: u64,
-    ) -> SendBuf {
         SendBuf {
             max_data,
             start_time: Some(SystemTime::now()),
-            start_instant: Some(Instant::now()),
+            new: true,
+            priority: DEFAULT_PRIORITY,
+            deadline: MAX_DEADLINE,
+            ..SendBuf::default()
+        }
+    }
+
+    /// Creates a new send buffer with deadline
+    fn new_full(max_data: u64, deadline: u64, priority: u64) -> SendBuf {
+        SendBuf {
+            max_data,
+            start_time: Some(SystemTime::now()),
             deadline,
             priority,
             new: true,
@@ -1416,10 +1577,10 @@ impl SendBuf {
         let mut out_len = max_data;
         let mut out_off = self.data.peek().map_or_else(|| out.off, RangeBuf::off);
 
-        while out_len > 0 &&
-            self.ready() &&
-            self.off() == out_off &&
-            self.off() < self.max_data
+        while out_len > 0
+            && self.ready()
+            && self.off() == out_off
+            && self.off() < self.max_data
         {
             let mut buf = match self.data.pop() {
                 Some(v) => v,

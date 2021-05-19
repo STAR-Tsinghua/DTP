@@ -28,7 +28,6 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::cc;
-use crate::packet;
 use crate::recovery::Sent;
 
 /// Reno congestion control implementation.
@@ -45,7 +44,7 @@ pub struct Reno {
 }
 
 impl cc::CongestionControl for Reno {
-    fn new(_init_cwnd: u64, _init_pacing_rate: u64) -> Self
+    fn new() -> Self
     where
         Self: Sized,
     {
@@ -83,74 +82,55 @@ impl cc::CongestionControl for Reno {
         self.congestion_recovery_start_time
     }
 
-    fn on_packet_sent_cc(
-        &mut self, _pkt: &Sent, bytes_sent: usize, _trace_id: &str,
-    ) {
+    fn on_packet_sent_cc(&mut self, bytes_sent: usize, _trace_id: &str) {
         self.bytes_in_flight += bytes_sent;
     }
 
     fn on_packet_acked_cc(
-        &mut self, packet: &Sent, 
-        _srtt: Duration, _min_rtt: Duration, _latest_rtt: Duration,
+        &mut self, packet: &Sent, _srtt: Duration, _min_rtt: Duration,
         app_limited: bool, _trace_id: &str,
-        _epoch: packet::Epoch, _lost_count: usize
     ) {
         self.bytes_in_flight -= packet.size;
 
         if self.in_congestion_recovery(packet.time) {
+            trace!("in_congestion_recovery");
             return;
         }
 
         if app_limited {
+            trace!("app_limited");
             return;
         }
 
         if self.congestion_window < self.ssthresh {
             // Slow start.
+            trace!("Slow start");
             self.congestion_window += packet.size;
         } else {
             // Congestion avoidance.
+            trace!("Congestion avoidances");
             self.congestion_window +=
                 (cc::MAX_DATAGRAM_SIZE * packet.size) / self.congestion_window;
         }
     }
 
     fn congestion_event(
-        &mut self, _srtt: Duration, time_sent: Instant, now: Instant,
-        _trace_id: &str, _packet_id: u64,
-        _epoch: packet::Epoch, _lost_count: usize
+        &mut self, time_sent: Instant, now: Instant, _trace_id: &str,
     ) {
+        info!("fn congestion_event");
         // Start a new congestion event if packet was sent after the
         // start of the previous congestion recovery period.
         if !self.in_congestion_recovery(time_sent) {
             self.congestion_recovery_start_time = Some(now);
 
-            self.congestion_window = (self.congestion_window as f64 *
-                cc::LOSS_REDUCTION_FACTOR)
+            self.congestion_window = (self.congestion_window as f64
+                * cc::LOSS_REDUCTION_FACTOR)
                 as usize;
+            info!("cutting cwnd half");
             self.congestion_window =
                 std::cmp::max(self.congestion_window, cc::MINIMUM_WINDOW);
             self.ssthresh = self.congestion_window;
         }
-    }
-
-    // unused
-    fn pacing_rate(&self) -> u64 {
-        u64::max_value()
-    }
-
-    fn cc_bbr_begin_ack(&mut self, _ack_time: Instant) {}
-
-    fn cc_bbr_end_ack(&mut self) {}
-
-    fn bbr_min_rtt(&mut self) -> Duration {
-        Duration::new(0, 0)
-    }
-
-    fn cc_trigger(
-        &mut self, _event_type: char, _rtt: u64, _bytes_in_flight: u64,
-        _packet_id: u64,
-    ) {
     }
 }
 
@@ -164,159 +144,140 @@ impl std::fmt::Debug for Reno {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-//     const TRACE_ID: &str = "test_id";
+    const TRACE_ID: &str = "test_id";
 
-//     fn init() {
-//         let _ = env_logger::builder().is_test(true).try_init();
-//     }
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
 
-//     #[test]
-//     fn reno_init() {
-//         let cc = cc::new_congestion_control(cc::Algorithm::Reno);
+    #[test]
+    fn reno_init() {
+        let cc = cc::new_congestion_control(cc::Algorithm::Reno);
 
-//         assert!(cc.cwnd() > 0);
-//         assert_eq!(cc.bytes_in_flight(), 0);
-//     }
+        assert!(cc.cwnd() > 0);
+        assert_eq!(cc.bytes_in_flight(), 0);
+    }
 
-//     #[test]
-//     fn reno_send() {
-//         init();
+    #[test]
+    fn reno_send() {
+        init();
 
-//         let mut cc = cc::new_congestion_control(cc::Algorithm::Reno);
+        let mut cc = cc::new_congestion_control(cc::Algorithm::Reno);
 
-//         let p = Sent {
-//             pkt_num: 0,
-//             frames: vec![],
-//             time: std::time::Instant::now(),
-//             size: 1000,
-//             ack_eliciting: true,
-//             in_flight: true,
-//         };
+        cc.on_packet_sent_cc(1000, TRACE_ID);
 
-//         cc.on_packet_sent_cc(&p, p.size, TRACE_ID);
+        assert_eq!(cc.bytes_in_flight(), 1000);
+    }
 
-//         assert_eq!(cc.bytes_in_flight(), p.size);
-//     }
+    #[test]
+    fn reno_slow_start() {
+        init();
 
-//     #[test]
-//     fn reno_slow_start() {
-//         init();
+        let mut cc = cc::new_congestion_control(cc::Algorithm::Reno);
 
-//         let mut cc = cc::new_congestion_control(cc::Algorithm::Reno);
+        let p = Sent {
+            pkt_num: 0,
+            frames: vec![],
+            time: std::time::Instant::now(),
+            size: 5000,
+            ack_eliciting: true,
+            in_flight: true,
+        };
 
-//         let p = Sent {
-//             pkt_num: 0,
-//             frames: vec![],
-//             time: std::time::Instant::now(),
-//             size: 5000,
-//             ack_eliciting: true,
-//             in_flight: true,
-//         };
+        // Send 5k x 4 = 20k, higher than default cwnd(~15k)
+        // to become no longer app limited.
+        cc.on_packet_sent_cc(p.size, TRACE_ID);
+        cc.on_packet_sent_cc(p.size, TRACE_ID);
+        cc.on_packet_sent_cc(p.size, TRACE_ID);
+        cc.on_packet_sent_cc(p.size, TRACE_ID);
 
-//         // Send 5k x 4 = 20k, higher than default cwnd(~15k)
-//         // to become no longer app limited.
-//         cc.on_packet_sent_cc(&p, p.size, TRACE_ID);
-//         cc.on_packet_sent_cc(&p, p.size, TRACE_ID);
-//         cc.on_packet_sent_cc(&p, p.size, TRACE_ID);
-//         cc.on_packet_sent_cc(&p, p.size, TRACE_ID);
+        let cwnd_prev = cc.cwnd();
 
-//         let cwnd_prev = cc.cwnd();
+        cc.on_packet_acked_cc(
+            &p,
+            Duration::new(0, 1),
+            Duration::new(0, 1),
+            false,
+            TRACE_ID,
+        );
 
-//         cc.on_packet_acked_cc(
-//             &p,
-//             Duration::new(0, 1),
-//             Duration::new(0, 1),
-//             false,
-//             TRACE_ID,
-//         );
+        // Check if cwnd increased by packet size (slow start).
+        assert_eq!(cc.cwnd(), cwnd_prev + p.size);
+    }
 
-//         // Check if cwnd increased by packet size (slow start).
-//         assert_eq!(cc.cwnd(), cwnd_prev + p.size);
-//     }
+    #[test]
+    fn reno_congestion_event() {
+        init();
 
-//     #[test]
-//     fn reno_congestion_event() {
-//         init();
+        let mut cc = cc::new_congestion_control(cc::Algorithm::Reno);
+        let prev_cwnd = cc.cwnd();
 
-//         let mut cc = cc::new_congestion_control(cc::Algorithm::Reno);
-//         let prev_cwnd = cc.cwnd();
+        cc.congestion_event(
+            std::time::Instant::now(),
+            std::time::Instant::now(),
+            TRACE_ID,
+        );
 
-//         cc.congestion_event(
-//             Duration::from_millis(0),
-//             std::time::Instant::now(),
-//             std::time::Instant::now(),
-//             TRACE_ID,
-//         );
+        // In Reno, after congestion event, cwnd will be cut in half.
+        assert_eq!(prev_cwnd / 2, cc.cwnd());
+    }
 
-//         // In Reno, after congestion event, cwnd will be cut in half.
-//         assert_eq!(prev_cwnd / 2, cc.cwnd());
-//     }
+    #[test]
+    fn reno_congestion_avoidance() {
+        init();
 
-//     #[test]
-//     fn reno_congestion_avoidance() {
-//         init();
+        let mut cc = cc::new_congestion_control(cc::Algorithm::Reno);
+        let prev_cwnd = cc.cwnd();
 
-//         let mut cc = cc::new_congestion_control(cc::Algorithm::Reno);
-//         let prev_cwnd = cc.cwnd();
+        // Send 20K bytes.
+        cc.on_packet_sent_cc(20000, TRACE_ID);
 
-//         // Send 20K bytes.
-//         let p = Sent {
-//             pkt_num: 0,
-//             frames: vec![],
-//             time: std::time::Instant::now(),
-//             size: 20000,
-//             ack_eliciting: true,
-//             in_flight: true,
-//         };
-//         cc.on_packet_sent_cc(&p, 20000, TRACE_ID);
+        cc.congestion_event(
+            std::time::Instant::now(),
+            std::time::Instant::now(),
+            TRACE_ID,
+        );
 
-//         cc.congestion_event(
-//             Duration::from_millis(0),
-//             std::time::Instant::now(),
-//             std::time::Instant::now(),
-//             TRACE_ID,
-//         );
+        // In Reno, after congestion event, cwnd will be cut in half.
+        assert_eq!(prev_cwnd / 2, cc.cwnd());
 
-//         // In Reno, after congestion event, cwnd will be cut in half.
-//         assert_eq!(prev_cwnd / 2, cc.cwnd());
+        let p = Sent {
+            pkt_num: 0,
+            frames: vec![],
+            time: std::time::Instant::now(),
+            size: 5000,
+            ack_eliciting: true,
+            in_flight: true,
+        };
 
-//         let p = Sent {
-//             pkt_num: 0,
-//             frames: vec![],
-//             time: std::time::Instant::now(),
-//             size: 5000,
-//             ack_eliciting: true,
-//             in_flight: true,
-//         };
+        let prev_cwnd = cc.cwnd();
 
-//         let prev_cwnd = cc.cwnd();
+        // Ack 5000 bytes.
+        cc.on_packet_acked_cc(
+            &p,
+            Duration::new(0, 1),
+            Duration::new(0, 1),
+            false,
+            TRACE_ID,
+        );
 
-//         // Ack 5000 bytes.
-//         cc.on_packet_acked_cc(
-//             &p,
-//             Duration::new(0, 1),
-//             Duration::new(0, 1),
-//             false,
-//             TRACE_ID,
-//         );
+        // Check if cwnd increase is smaller than a packet size (congestion
+        // avoidance).
+        assert!(cc.cwnd() < prev_cwnd + 1111);
+    }
 
-//         // Check if cwnd increase is smaller than a packet size (congestion
-//         // avoidance).
-//         assert!(cc.cwnd() < prev_cwnd + 1111);
-//     }
+    #[test]
+    fn reno_collapse_cwnd() {
+        init();
 
-//     #[test]
-//     fn reno_collapse_cwnd() {
-//         init();
+        let mut cc = cc::new_congestion_control(cc::Algorithm::Reno);
 
-//         let mut cc = cc::new_congestion_control(cc::Algorithm::Reno);
-
-//         // cwnd will be reset
-//         cc.collapse_cwnd();
-//         assert_eq!(cc.cwnd(), cc::MINIMUM_WINDOW);
-//     }
-// }
+        // cwnd will be reset
+        cc.collapse_cwnd();
+        assert_eq!(cc.cwnd(), cc::MINIMUM_WINDOW);
+    }
+}

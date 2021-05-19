@@ -68,7 +68,7 @@ impl Encoder {
 
                     // Encode as statically indexed.
                     encode_int(idx, INDEXED | STATIC, 6, &mut b)?;
-                },
+                }
 
                 Some((idx, false)) => {
                     const STATIC: u8 = 0x10;
@@ -76,7 +76,7 @@ impl Encoder {
                     // Encode value as literal with static name reference.
                     encode_int(idx, LITERAL_WITH_NAME_REF | STATIC, 4, &mut b)?;
                     encode_str(&h.1, 7, &mut b)?;
-                },
+                }
 
                 None => {
                     // Encode as fully literal.
@@ -88,7 +88,7 @@ impl Encoder {
                     super::huffman::encode(h.0.as_bytes(), &mut b)?;
 
                     encode_str(&h.1, 7, &mut b)?;
-                },
+                }
             };
         }
 
@@ -158,8 +158,9 @@ fn lookup_static(h: &Header) -> Option<(u64, bool)> {
         ("content-type", "text/plain;charset=utf-8") => (54, true),
         ("range", "bytes=0-") => (55, true),
         ("strict-transport-security", "max-age=31536000") => (56, true),
-        ("strict-transport-security", "max-age=31536000; includesubdomains") =>
-            (57, true),
+        ("strict-transport-security", "max-age=31536000; includesubdomains") => {
+            (57, true)
+        }
         (
             "strict-transport-security",
             "max-age=31536000; includesubdomains; preload",

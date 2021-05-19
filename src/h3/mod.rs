@@ -737,8 +737,8 @@ impl Connection {
             return Err(Error::FrameUnexpected);
         }
 
-        let overhead = octets::varint_len(frame::DATA_FRAME_TYPE_ID) +
-            octets::varint_len(body.len() as u64);
+        let overhead = octets::varint_len(frame::DATA_FRAME_TYPE_ID)
+            + octets::varint_len(body.len() as u64);
 
         let stream_cap = conn.stream_capacity(stream_id)?;
 
@@ -962,13 +962,13 @@ impl Connection {
                 trace!("{} open GREASE stream {}", conn.trace_id(), stream_id);
 
                 conn.stream_send(stream_id, b"GREASE is the word", false)?;
-            },
+            }
 
             Err(Error::IdError) => {
                 trace!("{} GREASE stream blocked", conn.trace_id(),);
 
                 return Ok(());
-            },
+            }
 
             Err(e) => return Err(e),
         };
@@ -1094,7 +1094,7 @@ impl Connection {
                             );
 
                             self.peer_control_stream_id = Some(stream_id);
-                        },
+                        }
 
                         stream::Type::Push => {
                             // Only clients can receive push stream.
@@ -1107,7 +1107,7 @@ impl Connection {
 
                                 return Err(Error::StreamCreationError);
                             }
-                        },
+                        }
 
                         stream::Type::QpackEncoder => {
                             // Only one qpack encoder stream allowed.
@@ -1124,7 +1124,7 @@ impl Connection {
 
                             self.peer_qpack_streams.encoder_stream_id =
                                 Some(stream_id);
-                        },
+                        }
 
                         stream::Type::QpackDecoder => {
                             // Only one qpack decoder allowed.
@@ -1141,16 +1141,16 @@ impl Connection {
 
                             self.peer_qpack_streams.decoder_stream_id =
                                 Some(stream_id);
-                        },
+                        }
 
                         stream::Type::Unknown => {
                             // Unknown stream types are ignored.
                             // TODO: we MAY send STOP_SENDING
-                        },
+                        }
 
                         stream::Type::Request => unreachable!(),
                     }
-                },
+                }
 
                 stream::State::PushId => {
                     stream.try_fill_buffer(conn)?;
@@ -1165,7 +1165,7 @@ impl Connection {
                         conn.close(true, e.to_wire(), b"")?;
                         return Err(e);
                     }
-                },
+                }
 
                 stream::State::FrameType => {
                     stream.try_fill_buffer(conn)?;
@@ -1187,7 +1187,7 @@ impl Connection {
                             )?;
 
                             return Err(Error::FrameUnexpected);
-                        },
+                        }
 
                         Err(e) => {
                             conn.close(
@@ -1197,11 +1197,11 @@ impl Connection {
                             )?;
 
                             return Err(e);
-                        },
+                        }
 
                         _ => (),
                     }
-                },
+                }
 
                 stream::State::FramePayloadLen => {
                     stream.try_fill_buffer(conn)?;
@@ -1216,7 +1216,7 @@ impl Connection {
                         conn.close(true, e.to_wire(), b"")?;
                         return Err(e);
                     }
-                },
+                }
 
                 stream::State::FramePayload => {
                     stream.try_fill_buffer(conn)?;
@@ -1234,7 +1234,7 @@ impl Connection {
                             )?;
 
                             return Err(e);
-                        },
+                        }
                     };
 
                     match self.process_frame(conn, stream_id, frame) {
@@ -1244,11 +1244,11 @@ impl Connection {
 
                         Err(e) => return Err(e),
                     };
-                },
+                }
 
                 stream::State::Data => {
                     return Ok((stream_id, Event::Data));
-                },
+                }
 
                 stream::State::QpackInstruction => {
                     let mut d = [0; 4096];
@@ -1257,14 +1257,14 @@ impl Connection {
                     loop {
                         conn.stream_recv(stream_id, &mut d)?;
                     }
-                },
+                }
 
                 stream::State::Drain => {
                     // Discard incoming data on the stream.
                     conn.stream_shutdown(stream_id, crate::Shutdown::Read, 0)?;
 
                     break;
-                },
+                }
             }
         }
 
@@ -1294,7 +1294,7 @@ impl Connection {
                     qpack_max_table_capacity,
                     qpack_blocked_streams,
                 };
-            },
+            }
 
             frame::Frame::Headers { mut header_block } => {
                 if Some(stream_id) == self.peer_control_stream_id {
@@ -1325,11 +1325,14 @@ impl Connection {
 
                 let has_body = !conn.stream_finished(stream_id);
 
-                return Ok((stream_id, Event::Headers {
-                    list: headers,
-                    has_body,
-                }));
-            },
+                return Ok((
+                    stream_id,
+                    Event::Headers {
+                        list: headers,
+                        has_body,
+                    },
+                ));
+            }
 
             frame::Frame::Data { .. } => {
                 if Some(stream_id) == self.peer_control_stream_id {
@@ -1343,7 +1346,7 @@ impl Connection {
                 }
 
                 // Do nothing. The Data event is returned separately.
-            },
+            }
 
             frame::Frame::GoAway {
                 stream_id: goaway_stream_id,
@@ -1379,7 +1382,7 @@ impl Connection {
                 }
 
                 // TODO: implement GOAWAY
-            },
+            }
 
             frame::Frame::MaxPushId { push_id } => {
                 if Some(stream_id) != self.peer_control_stream_id {
@@ -1413,7 +1416,7 @@ impl Connection {
                 }
 
                 self.max_push_id = push_id;
-            },
+            }
 
             frame::Frame::PushPromise { .. } => {
                 if self.is_server {
@@ -1437,7 +1440,7 @@ impl Connection {
                 }
 
                 // TODO: implement more checks and PUSH_PROMISE event
-            },
+            }
 
             frame::Frame::DuplicatePush { .. } => {
                 if self.is_server {
@@ -1461,7 +1464,7 @@ impl Connection {
                 }
 
                 // TODO: implement DUPLICATE_PUSH
-            },
+            }
 
             frame::Frame::CancelPush { .. } => {
                 if Some(stream_id) != self.peer_control_stream_id {
@@ -1475,7 +1478,7 @@ impl Connection {
                 }
 
                 // TODO: implement CANCEL_PUSH frame
-            },
+            }
 
             frame::Frame::Unknown => (),
         }
@@ -2379,12 +2382,12 @@ mod tests {
 
                 Err(Error::Done) => {
                     break;
-                },
+                }
 
                 Err(Error::ClosedCriticalStream) => {
                     control_stream_closed = true;
                     break;
-                },
+                }
 
                 Err(_) => (),
             }
@@ -2415,12 +2418,12 @@ mod tests {
 
                 Err(Error::Done) => {
                     break;
-                },
+                }
 
                 Err(Error::ClosedCriticalStream) => {
                     qpack_stream_closed = true;
                     break;
-                },
+                }
 
                 Err(_) => (),
             }
@@ -2453,11 +2456,11 @@ mod tests {
 
                 Err(Error::Done) => {
                     break;
-                },
+                }
 
                 Err(_) => {
                     panic!();
-                },
+                }
             }
         }
     }

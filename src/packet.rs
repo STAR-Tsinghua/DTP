@@ -28,15 +28,16 @@ use std::time;
 
 use ring::aead;
 
-use crate::Error;
+use crate::{Error, PATH_NUM};
 use crate::Result;
 
 use crate::crypto;
-use crate::fec;
 use crate::octets;
 use crate::rand;
 use crate::ranges;
 use crate::stream;
+
+use std::collections::HashMap;
 
 const FORM_BIT: u8 = 0x80;
 const FIXED_BIT: u8 = 0x40;
@@ -146,9 +147,6 @@ pub struct Header {
     /// The key phase bit of the packet. It's only meaningful after the header
     /// protection is removed.
     pub(crate) key_phase: bool,
-
-    /// FEC info
-    pub fec_info: fec::FecStatus,
 }
 
 impl Header {
@@ -181,32 +179,18 @@ impl Header {
 
         if !Header::is_long(first) {
             // Decode short header.
-            let dcid = b.get_bytes(dcid_len)?.to_vec();
-            let group_id = b.get_u32()?;
-            let index = b.get_u8()?;
-            let m = b.get_u8()?;
-            let n = b.get_u8()?;
-            let padding = b.get_u8()?;
-            for _ in 0..padding {
-                b.get_u8()?;
-            }
+            let dcid = b.get_bytes(dcid_len)?;
 
             return Ok(Header {
                 ty: Type::Short,
                 version: 0,
-                dcid,
+                dcid: dcid.to_vec(),
                 scid: Vec::new(),
                 pkt_num: 0,
                 pkt_num_len: 0,
                 token: None,
                 versions: None,
                 key_phase: false,
-                fec_info: fec::FecStatus {
-                    group_id,
-                    index,
-                    m,
-                    n,
-                },
             });
         }
 
@@ -245,7 +229,7 @@ impl Header {
         match ty {
             Type::Initial => {
                 token = Some(b.get_bytes_with_varint_length()?.to_vec());
-            },
+            }
 
             Type::Retry => {
                 // Exclude the integrity tag from the token.
@@ -255,7 +239,7 @@ impl Header {
 
                 let token_len = b.cap() - aead::AES_128_GCM.tag_len();
                 token = Some(b.get_bytes(token_len)?.to_vec());
-            },
+            }
 
             Type::VersionNegotiation => {
                 let mut list: Vec<u32> = Vec::new();
@@ -266,7 +250,7 @@ impl Header {
                 }
 
                 versions = Some(list);
-            },
+            }
 
             _ => (),
         };
@@ -281,7 +265,6 @@ impl Header {
             token,
             versions,
             key_phase: false,
-            fec_info: Default::default(),
         })
     }
 
@@ -308,15 +291,6 @@ impl Header {
 
             out.put_u8(first)?;
             out.put_bytes(&self.dcid)?;
-            out.put_u32(self.fec_info.group_id)?;
-            out.put_u8(self.fec_info.index)?;
-            out.put_u8(self.fec_info.m)?;
-            out.put_u8(self.fec_info.n)?;
-            let padding = 4 - self.pkt_num_len as u8;
-            out.put_u8(padding)?;
-            for _ in 0..padding {
-                out.put_u8(0)?;
-            }
 
             return Ok(());
         }
@@ -349,19 +323,19 @@ impl Header {
                     Some(ref v) => {
                         out.put_varint(v.len() as u64)?;
                         out.put_bytes(v)?;
-                    },
+                    }
 
                     // No token, so length = 0.
                     None => {
                         out.put_varint(0)?;
-                    },
+                    }
                 }
-            },
+            }
 
             Type::Retry => {
                 // Retry packets don't have a token length.
                 out.put_bytes(self.token.as_ref().unwrap())?;
-            },
+            }
 
             _ => (),
         }
@@ -381,58 +355,39 @@ impl std::fmt::Debug for Header {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{:?}", self.ty)?;
 
-        // if self.ty != Type::Application {
-        // write!(f, " version={:x}", self.version)?;
-        // }
+        if self.ty != Type::Short {
+            write!(f, " version={:x}", self.version)?;
+        }
 
-        // write!(f, " dcid=")?;
-        // for b in &self.dcid {
-        // write!(f, "{:02x}", b)?;
-        // }
+        write!(f, " dcid=")?;
+        for b in &self.dcid {
+            write!(f, "{:02x}", b)?;
+        }
 
-        // if self.ty != Type::Application {
-        // write!(f, " scid=")?;
-        // for b in &self.scid {
-        // write!(f, "{:02x}", b)?;
-        // }
-        // }
+        if self.ty != Type::Short {
+            write!(f, " scid=")?;
+            for b in &self.scid {
+                write!(f, "{:02x}", b)?;
+            }
+        }
 
-        // if let Some(ref odcid) = self.odcid {
-        // write!(f, " odcid=")?;
-        // for b in odcid {
-        // write!(f, "{:02x}", b)?;
-        // }
-        // }
+        if let Some(ref token) = self.token {
+            write!(f, " token=")?;
+            for b in token {
+                write!(f, "{:02x}", b)?;
+            }
+        }
 
-        // if let Some(ref token) = self.token {
-        // write!(f, " token=")?;
-        // for b in token {
-        // write!(f, "{:02x}", b)?;
-        // }
-        // }
-
-        // if let Some(ref versions) = self.versions {
-        // write!(f, " versions={:x?}", versions)?;
-        // }
+        if let Some(ref versions) = self.versions {
+            write!(f, " versions={:x?}", versions)?;
+        }
 
         if self.ty == Type::Short {
-            // write!(f, " key_phase={}", self.key_phase)?;
-            write!(f, " fec info={:?}", self.fec_info)?;
+            write!(f, " key_phase={}", self.key_phase)?;
         }
 
         Ok(())
     }
-}
-
-/// Update fec info inside packet header. b is packet buffer.
-pub fn update_fec_info(b: &mut octets::Octets, hdr: &Header) -> Result<()> {
-    let fec_offset = 1 + hdr.dcid.len();
-    let (_, mut info_buf) = b.split_at(fec_offset)?;
-    info_buf.put_u32(hdr.fec_info.group_id)?;
-    info_buf.put_u8(hdr.fec_info.index)?;
-    info_buf.put_u8(hdr.fec_info.m)?;
-    info_buf.put_u8(hdr.fec_info.n)?;
-    Ok(())
 }
 
 pub fn pkt_num_len(pn: u64) -> Result<usize> {
@@ -641,7 +596,6 @@ pub fn retry(
         token: Some(token.to_vec()),
         versions: None,
         key_phase: false,
-        fec_info: Default::default(),
     };
 
     hdr.to_bytes(&mut b)?;
@@ -701,7 +655,7 @@ fn compute_retry_integrity_tag(
 }
 
 pub struct PktNumSpace {
-    pub largest_rx_pkt_num: u64,
+    pub largest_rx_pkt_num: [u64; PATH_NUM],
 
     pub largest_rx_pkt_time: time::Instant,
 
@@ -709,9 +663,16 @@ pub struct PktNumSpace {
 
     pub recv_pkt_need_ack: ranges::RangeSet,
 
+    pub path_need_ack_pkt: [ranges::RangeSet; PATH_NUM],
+
+    /// Map of path_id indexed by pkt_num.
+    /// Record each packet you send  
+    pub pkts_sent_with_pathid: HashMap<u64, usize>,
+
     pub recv_pkt_num: PktNumWindow,
 
-    pub ack_elicited: bool,
+    // pub ack_elicited: bool,
+    pub ack_elicited: [bool; PATH_NUM],
 
     pub crypto_open: Option<crypto::Open>,
     pub crypto_seal: Option<crypto::Seal>,
@@ -725,7 +686,7 @@ pub struct PktNumSpace {
 impl PktNumSpace {
     pub fn new() -> PktNumSpace {
         PktNumSpace {
-            largest_rx_pkt_num: 0,
+            largest_rx_pkt_num: [0; PATH_NUM],
 
             largest_rx_pkt_time: time::Instant::now(),
 
@@ -733,9 +694,15 @@ impl PktNumSpace {
 
             recv_pkt_need_ack: ranges::RangeSet::default(),
 
+            path_need_ack_pkt: [ranges::RangeSet::default(), ranges::RangeSet::default()],
+
+            // init hashmap
+            pkts_sent_with_pathid: HashMap::new(),
+
             recv_pkt_num: PktNumWindow::default(),
 
-            ack_elicited: false,
+            // ack_elicited: false,
+            ack_elicited: [false; PATH_NUM],
 
             crypto_open: None,
             crypto_seal: None,
@@ -756,15 +723,18 @@ impl PktNumSpace {
         self.crypto_stream =
             stream::Stream::new(std::u64::MAX, std::u64::MAX, true, true);
 
-        self.ack_elicited = false;
+        // self.ack_elicited = false;
+        self.ack_elicited = [false; PATH_NUM];
     }
 
     pub fn overhead(&self) -> Option<usize> {
         Some(self.crypto_seal.as_ref()?.alg().tag_len())
     }
 
-    pub fn ready(&self) -> bool {
-        self.crypto_stream.is_flushable() || self.ack_elicited
+    pub fn ready(&self, path: usize) -> bool {
+        let ack_eli = self.ack_elicited[path];
+        // self.crypto_stream.is_flushable() || self.ack_elicited
+        self.crypto_stream.is_flushable() || ack_eli
     }
 }
 
@@ -783,14 +753,20 @@ impl PktNumWindow {
 
         // Packet is on the right end of the window.
         if seq > self.upper() {
+            info!("seq > self.upper");
             let diff = seq - self.upper();
+            info!("diff {}", diff);
             self.lower += diff;
+            info!("lower {}", self.lower);
 
             self.window = self.window.checked_shl(diff as u32).unwrap_or(0);
+            info!("window {}", self.window);
         }
 
         let mask = 1_u128 << (self.upper() - seq);
+        info!("seq {}, mask {}, window {}", seq, mask, self.window);
         self.window |= mask;
+        info!("mask {}, window {}", mask, self.window);
     }
 
     pub fn contains(&mut self, seq: u64) -> bool {
@@ -799,19 +775,25 @@ impl PktNumWindow {
             return false;
         }
 
+        info!("seq : {} lower {}", seq, self.lower);
+
         // Packet is on the left end of the window.
         if seq < self.lower {
+            info!("seq < lower");
+            info!("seq : {} lower {}", seq, self.lower);
             return true;
         }
 
         let mask = 1_u128 << (self.upper() - seq);
+        info!("mask {}", mask);
+        info!("self.window & mask != 0 {}", self.window & mask != 0);
         self.window & mask != 0
     }
 
     fn upper(&self) -> u64 {
         self.lower
-            .saturating_add(std::mem::size_of::<u128>() as u64 * 8) -
-            1
+            .saturating_add(std::mem::size_of::<u128>() as u64 * 8)
+            - 1
     }
 }
 
@@ -834,7 +816,6 @@ mod tests {
             token: Some(vec![0xba; 24]),
             versions: None,
             key_phase: false,
-            fec_info: Default::default(),
         };
 
         let mut d = [0; 63];
@@ -861,7 +842,6 @@ mod tests {
             token: Some(vec![0x05, 0x06, 0x07, 0x08]),
             versions: None,
             key_phase: false,
-            fec_info: Default::default(),
         };
 
         let mut d = [0; 50];
@@ -888,7 +868,6 @@ mod tests {
             token: Some(vec![0x05, 0x06, 0x07, 0x08]),
             versions: None,
             key_phase: false,
-            fec_info: Default::default(),
         };
 
         let mut d = [0; 50];
@@ -915,7 +894,6 @@ mod tests {
             token: Some(vec![0x05, 0x06, 0x07, 0x08]),
             versions: None,
             key_phase: false,
-            fec_info: Default::default(),
         };
 
         let mut d = [0; 50];
@@ -942,7 +920,6 @@ mod tests {
             token: Some(vec![0x05, 0x06, 0x07, 0x08]),
             versions: None,
             key_phase: false,
-            fec_info: Default::default(),
         };
 
         let mut d = [0; 50];
@@ -966,7 +943,6 @@ mod tests {
             token: None,
             versions: None,
             key_phase: false,
-            fec_info: Default::default(),
         };
 
         let mut d = [0; 50];
@@ -990,12 +966,6 @@ mod tests {
             token: None,
             versions: None,
             key_phase: false,
-            fec_info: fec::FecStatus {
-                m: 10,
-                n: 1,
-                group_id: 10,
-                index: 1,
-            },
         };
 
         let mut d = [0; 50];
@@ -1005,44 +975,6 @@ mod tests {
 
         let mut b = octets::Octets::with_slice(&mut d);
         assert_eq!(Header::from_bytes(&mut b, 9).unwrap(), hdr);
-    }
-
-    #[test]
-    fn modify_header() -> Result<()> {
-        let mut hdr = Header {
-            ty: Type::Short,
-            version: 0,
-            dcid: vec![0xba, 0xba, 0xba, 0xba, 0xba, 0xba, 0xba, 0xba, 0xba],
-            scid: vec![],
-            pkt_num: 0,
-            pkt_num_len: 0,
-            token: None,
-            versions: None,
-            key_phase: false,
-            fec_info: fec::FecStatus {
-                m: 10,
-                n: 1,
-                group_id: 10,
-                index: 1,
-            },
-        };
-
-        let mut d = [0; 50];
-        let mut b = octets::Octets::with_slice(&mut d);
-        assert!(hdr.to_bytes(&mut b).is_ok());
-
-        let mut b = octets::Octets::with_slice(&mut d);
-        assert_eq!(Header::from_bytes(&mut b, 9).unwrap(), hdr);
-
-        hdr.fec_info.index = 2;
-        hdr.fec_info.m = 9;
-        hdr.fec_info.n = 3;
-        let mut b = octets::Octets::with_slice(&mut d);
-        update_fec_info(&mut b, &hdr)?;
-
-        let mut b = octets::Octets::with_slice(&mut d);
-        assert_eq!(Header::from_bytes(&mut b, 9).unwrap(), hdr);
-        Ok(())
     }
 
     #[test]
@@ -1683,7 +1615,6 @@ mod tests {
             token: None,
             versions: None,
             key_phase: false,
-            fec_info: Default::default(),
         };
 
         hdr.to_bytes(&mut b).unwrap();

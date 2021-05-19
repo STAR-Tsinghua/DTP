@@ -264,22 +264,16 @@
 
 #[macro_use]
 extern crate log;
-extern crate reed_solomon_erasure;
 
 use std::cmp;
-use std::collections::hash_map;
-use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::time;
+
+use std::f64;
 
 use std::pin::Pin;
 use std::str::FromStr;
 
-extern {
-    fn SolutionInit(init_cwnd: *mut u64, init_pacing_rate: *mut u64);
-    fn SolutionRedundancy() -> libc::c_float;
-    fn SolutionAckRatio() -> u64;
-}
+use std::collections::VecDeque;
 
 pub use crate::cc::Algorithm as CongestionControlAlgorithm;
 
@@ -298,6 +292,13 @@ pub const MAX_CONN_ID_LEN: usize = crate::packet::MAX_CID_LEN as usize;
 
 /// The minimum length of Initial packets sent by a client.
 pub const MIN_CLIENT_INITIAL_LEN: usize = 1200;
+
+/// MP: two path sign
+const PATH_NUM: usize = 2;
+/// Num of priority queues
+const MAXNUM_PRIORITY_QUEUE: usize = 3;
+/// Blocks are all assigned or will miss deadline.
+const NONE_BLOCK: u64 = 0;
 
 #[cfg(not(feature = "fuzzing"))]
 const PAYLOAD_MIN_LEN: usize = 4;
@@ -323,24 +324,24 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[repr(C)]
 pub enum Error {
     /// There is no more work to do.
-    Done               = -1,
+    Done = -1,
 
     /// The provided buffer is too short.
-    BufferTooShort     = -2,
+    BufferTooShort = -2,
 
     /// The provided packet cannot be parsed because its version is unknown.
-    UnknownVersion     = -3,
+    UnknownVersion = -3,
 
     /// The provided packet cannot be parsed because it contains an invalid
     /// frame.
-    InvalidFrame       = -4,
+    InvalidFrame = -4,
 
     /// The provided packet cannot be parsed.
-    InvalidPacket      = -5,
+    InvalidPacket = -5,
 
     /// The operation cannot be completed because the connection is in an
     /// invalid state.
-    InvalidState       = -6,
+    InvalidState = -6,
 
     /// The operation cannot be completed because the stream is in an
     /// invalid state.
@@ -350,22 +351,22 @@ pub enum Error {
     InvalidTransportParam = -8,
 
     /// A cryptographic operation failed.
-    CryptoFail         = -9,
+    CryptoFail = -9,
 
     /// The TLS handshake failed.
-    TlsFail            = -10,
+    TlsFail = -10,
 
     /// The peer violated the local flow control limits.
-    FlowControl        = -11,
+    FlowControl = -11,
 
     /// The peer violated the local stream limits.
-    StreamLimit        = -12,
+    StreamLimit = -12,
 
     /// The received data exceeds the stream's final size.
-    FinalSize          = -13,
+    FinalSize = -13,
 
     /// Error in congestion control.
-    CongestionControl  = -14,
+    CongestionControl = -14,
 }
 
 impl Error {
@@ -415,7 +416,7 @@ impl std::convert::From<octets::BufferTooShortError> for Error {
 #[repr(C)]
 pub enum Shutdown {
     /// Stop receiving stream data.
-    Read  = 0,
+    Read = 0,
 
     /// Stop sending stream data.
     Write = 1,
@@ -434,21 +435,6 @@ pub struct Config {
     grease: bool,
 
     cc_algorithm: cc::Algorithm,
-
-    bct_offset: i64,
-
-    init_cwnd: u64,
-
-    init_pacing_rate: u64,
-
-    /// 'Data: ACK ratio', default: 4
-    /// Send ack when package number % get_data_ack_ratio() == 0
-    init_data_ack_ratio: u64,
-
-    /// Redundancy rate, default: 0, range: [0, f32::max]
-    /// The ratio of n : m
-    /// Example: rate = 0.2, m = 20 => n = 4
-    init_redundancy_rate: f32,
 }
 
 impl Config {
@@ -470,11 +456,6 @@ impl Config {
             application_protos: Vec::new(),
             grease: true,
             cc_algorithm: cc::Algorithm::Reno, // default cc algorithm
-            bct_offset: 0,
-            init_cwnd: cc::INITIAL_WINDOW as u64,
-            init_pacing_rate: u64::max_value(),
-            init_data_ack_ratio: 4,
-            init_redundancy_rate: 0f32,
         })
     }
 
@@ -720,41 +701,16 @@ impl Config {
     /// The default value is `quiche::CongestionControlAlgorithm::Reno`.
     pub fn set_cc_algorithm(&mut self, algo: CongestionControlAlgorithm) {
         self.cc_algorithm = algo;
-        if self.cc_algorithm == cc::Algorithm::CcTrigger {
-            // in aitrans, we need ntp
-            // use crate::ntp::ntp_offset;
-            // let (bct_offset, s) = ntp_offset("ntp1.aliyun.com:123");
-            // let (bct_offset, s) = ntp_offset("0.pool.ntp.org:123");
-            // let (bct_offset, s) = ntp_offset("time1.cloud.tencent.com:123");
-            // self.bct_offset = bct_offset;
-            self.bct_offset = 0;
-            // eprintln!("{}", s);
-        }
-        // Always call `SolutionInit` to apply default block selection algorithm
-        // Otherwise C codes may run with random initialization 
-        // which will cause unexpected errors without warning
-        // TODO: implement default block selection algorithm 
-        // TODO: with conditional compilation in stream.rs
-        unsafe {
-            SolutionInit(&mut self.init_cwnd, &mut self.init_pacing_rate)
-        };
-    }
-
-    /// Sets the ratio of data packets and ack frames
-    ///
-    /// The default value is `4`.
-    pub fn set_data_ack_ratio(&mut self, ratio: u64) {
-        self.init_data_ack_ratio = ratio;
-    }
-
-    /// Sets the initial redundancy rate
-    ///
-    /// The default value is `0.0`.
-    pub fn set_redundancy_rate(&mut self, rate: f32) {
-        self.init_redundancy_rate = rate;
     }
 }
 
+/// Information of data sent on path.  
+pub struct SendInfoOnPath {
+    streamid: u64,
+    unsend_size: u64,
+}
+
+#[repr(C)]
 /// A QUIC connection.
 pub struct Connection {
     /// QUIC wire version used for the connection.
@@ -836,9 +792,13 @@ pub struct Connection {
     challenge: Option<Vec<u8>>,
 
     /// Idle timeout expiration time.
+    /// Connection level
     idle_timer: Option<time::Instant>,
 
     /// Draining timeout expiration time.
+    /// Connection level
+    /// ---ZUO begin
+    /// Define as (the larger of two recovery.pto) * 3
     draining_timer: Option<time::Instant>,
 
     /// Whether this is a server-side connection.
@@ -867,6 +827,9 @@ pub struct Connection {
     /// Whether the HANDSHAKE_DONE has been sent.
     handshake_done_sent: bool,
 
+    /// Whether the second path has completed.
+    second_path_completed: bool,
+
     /// Whether the connection handshake has been confirmed.
     handshake_confirmed: bool,
 
@@ -880,32 +843,29 @@ pub struct Connection {
     /// Whether to send GREASE.
     grease: bool,
 
-    /// time offset get by ntp
-    bct_offset: i128,
+    /*--------------MP---------------*/
+    /// MP: Two path object
+    paths: [path::Path; PATH_NUM],
 
-    /// send ack frame every [data_ack_ratio] data packates
-    ///
-    /// [data_ack_ratio] is gotten by get_data_ack_ratio()
-    init_data_ack_ratio: u64,
+    /// path's seq
+    path_seqs: [u64; PATH_NUM],
 
-    /// Initial rate of m and n in FEC
-    init_redundancy_rate: f32,
+    /// Start time timestamp of each path
+    // init_path_start_time: Option<SystemTime>,
+    // subseq_path_start_time: Option<SystemTime>,
 
-    /// FEC encoders. <priority, fec group> no mix from different priority
-    fec: HashMap<u64, fec::FecGroup>,
+    /// Whether the path start time is set
+    // path_occupied: bool,
 
-    /// FEC encoded data in sender side.
-    fec_encoded: VecDeque<fec::FecFrame>,
+    /// VecDeque to represent the send info on each path
+    send_info: [VecDeque<SendInfoOnPath>; PATH_NUM],
 
-    /// FEC global group id.
-    next_fec_group_id: u32,
+    /// MP: One Way Delay Prediction and Measurement
+    one_way_delay_pm: one_way_delay_pred_meas::OneWayDelayPredMeas,
 
-    /// FEC decoders
-    fec_decoders: HashMap<u32, fec::FecGroup>,
-
-    /// fec tail size
-    tail_size: Option<u64>,
-
+    /// Number of arrived chunks
+    arrived_num: u64,
+    /*--------------MP---------------*/
 }
 
 /// Creates a new server-side connection.
@@ -1056,9 +1016,9 @@ pub fn retry(
 /// Returns true if the given protocol version is supported.
 pub fn version_is_supported(version: u32) -> bool {
     match version {
-        PROTOCOL_VERSION |
-        PROTOCOL_VERSION_DRAFT24 |
-        PROTOCOL_VERSION_DRAFT23 => true,
+        PROTOCOL_VERSION
+        | PROTOCOL_VERSION_DRAFT24
+        | PROTOCOL_VERSION_DRAFT23 => true,
 
         _ => false,
     }
@@ -1080,6 +1040,8 @@ impl Connection {
 
         let scid_as_hex: Vec<String> =
             scid.iter().map(|b| format!("{:02x}", b)).collect();
+
+        let init_cid = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
         let mut conn = Box::pin(Connection {
             version: config.version,
@@ -1154,6 +1116,8 @@ impl Connection {
 
             handshake_done_sent: false,
 
+            second_path_completed: false,
+
             handshake_confirmed: false,
 
             ack_eliciting_sent: false,
@@ -1162,21 +1126,21 @@ impl Connection {
 
             grease: config.grease,
 
-            bct_offset: config.bct_offset as i128,
+            // MP: Initialize Two default Paths
+            paths: [path::Path::new(scid, &init_cid, config), path::Path::new(&init_cid, &init_cid, config)],
 
-            init_data_ack_ratio: config.init_data_ack_ratio,
+            // init_path_start_time: Some(SystemTime::now()),
+            // subseq_path_start_time: Some(SystemTime::now()),
+            path_seqs: [0; PATH_NUM],
 
-            init_redundancy_rate: config.init_redundancy_rate,
+            // path_occupied: false,
+            send_info: [VecDeque::new(), VecDeque::new()],
 
-            fec: Default::default(),
+            // MP: Initialize One Way Delay Prediction and Measurement
+            one_way_delay_pm:
+                one_way_delay_pred_meas::OneWayDelayPredMeas::default(),
 
-            fec_encoded: Default::default(),
-
-            next_fec_group_id: 1, // start from 1, 0 means not FEC.
-
-            fec_decoders: Default::default(),
-
-            tail_size: None,
+            arrived_num: 0,
         });
 
         if let Some(odcid) = odcid {
@@ -1197,6 +1161,10 @@ impl Connection {
 
             conn.dcid.extend_from_slice(&dcid);
 
+            // To be confirmed.
+            println!("------------------init path dcid init-----------------");
+            conn.paths[0].set_dcid(&dcid); // added by xk
+
             conn.pkt_num_spaces[packet::EPOCH_INITIAL].crypto_open =
                 Some(aead_open);
             conn.pkt_num_spaces[packet::EPOCH_INITIAL].crypto_seal =
@@ -1206,6 +1174,373 @@ impl Connection {
         }
 
         Ok(conn)
+    }
+
+    /* MP added functions start */
+    fn set_subseq_path_id(&mut self, pscid: &[u8], pdcid: &[u8]) -> () {
+        self.paths[1].set_scid(pscid);
+        self.paths[1].set_dcid(pdcid);
+    }
+
+    fn get_path_scid(&mut self) -> (&[u8], &[u8]) {
+        (self.paths[0].get_scid(), self.paths[1].get_scid())
+    }
+    /* MP added functions end */
+
+    /* heri algo start */
+    fn get_stream_to_send(
+        &mut self, schedule_path_id: usize, lost_pkt: bool,
+    ) -> Option<u64> {
+        if !self.streams.has_flushable() {
+            info!("No flushable stream.");
+            return None;
+        }
+
+        let stream_to_send;
+
+        // If the network condition changes greatly, re-schedule;
+        // If a frame is lost, re-schedule.
+        // If new block comes, re-schedule.
+        // Can change to the pkt-level schedule.
+        if self.network_varied(schedule_path_id)
+            || lost_pkt
+            || self.arrived_num < self.streams.len() as u64
+        {
+            info!("lost pkt {}", lost_pkt);
+            info!("new block");
+            self.schedule_prio_mp(true);
+        }
+        // Record whether new blocks come.
+        if self.arrived_num < self.streams.len() as u64 {
+            self.arrived_num = self.streams.len() as u64;
+        }
+
+        // Check the stream flushable.
+        match self.send_info[schedule_path_id as usize].get(0) {
+            Some(_) => {
+                while !self.send_info[schedule_path_id as usize].is_empty() {
+                    let id = self.send_info[schedule_path_id as usize]
+                        .get(0)
+                        .unwrap()
+                        .streamid;
+                    let stream = match self.streams.get_mut(id) {
+                        Some(v) => v,
+
+                        None => {
+                            info!("Error: no such stream.");
+                            return None;
+                        }
+                    };
+                    if !stream.is_flushable() {
+                        info!("stream not flushable is poped");
+                        self.send_info[schedule_path_id as usize].pop_front();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            None => {}
+        }
+        // Return the front of the VecDeque
+        match self.send_info[schedule_path_id as usize].get(0) {
+            Some(x) => {
+                if x.unsend_size > 0 {
+                    // return Some(x.streamid);
+                    info!("Have info data to send");
+                    stream_to_send = Some(x.streamid);
+                } else {
+                    // Pop the info which is sent over.
+                    while !self.send_info[schedule_path_id as usize].is_empty()
+                        && self.send_info[schedule_path_id as usize]
+                            .get(0)
+                            .unwrap()
+                            .unsend_size
+                            <= 0
+                    {
+                        info!("pop front send info");
+                        self.send_info[schedule_path_id as usize].pop_front();
+                    }
+                    // Send over on one path.
+                    if self.send_info[schedule_path_id as usize].len() == 0 {
+                        info!("Send over on one path");
+                        self.schedule_prio_mp(false);
+                        if self.send_info[schedule_path_id as usize].len() == 0 {
+                            info!("Still no block to send.");
+                            return None;
+                        }
+                    }
+                    stream_to_send = Some(
+                        self.send_info[schedule_path_id as usize]
+                            .get(0)
+                            .unwrap()
+                            .streamid,
+                    );
+                }
+            }
+            None => {
+                // schedule
+                info!("Get none and schedule");
+                self.schedule_prio_mp(false);
+                if self.send_info[schedule_path_id as usize].len() == 0 {
+                    info!("Still no block to send2.");
+                    return None;
+                }
+                stream_to_send = Some(
+                    self.send_info[schedule_path_id as usize]
+                        .get(0)
+                        .unwrap()
+                        .streamid,
+                );
+            }
+        }
+
+        // pop(return and remove) stream that send next step id from flushable
+        for i in 0..self.streams.flushable.len() {
+            let &id = self.streams.flushable.get(i).unwrap();
+            if id == stream_to_send.unwrap() {
+                self.streams.flushable.swap_remove_front(i);
+                break;
+            }
+        }
+        // pop from priority queues
+        'over: for strict_queue in 0..MAXNUM_PRIORITY_QUEUE {
+            for i in 0..self.streams.priority_queues[strict_queue].len() {
+                let &id =
+                    self.streams.priority_queues[strict_queue].get(i).unwrap();
+                if id == stream_to_send.unwrap() {
+                    self.streams.priority_queues[strict_queue]
+                        .swap_remove_front(i);
+                    break 'over;
+                }
+            }
+        }
+
+        info!("get stream to send {:?}", stream_to_send);
+
+        let sid = stream_to_send.unwrap();
+
+        if self.paths[schedule_path_id].last_block != 0
+            && sid != self.paths[schedule_path_id].last_block
+            && self.paths[schedule_path_id].previous_unsend != 0
+        {
+            let last_stream =
+                match self.streams.get_mut(self.paths[schedule_path_id].last_block) {
+                    Some(v) => v,
+
+                    None => {
+                        info!("Error: no such stream.");
+                        return None;
+                    }
+                };
+
+            info!(
+                "First path: stream {} be preemted by stream {}",
+                self.paths[schedule_path_id].last_block, sid
+            );
+            last_stream.preem_num = last_stream.preem_num + 1;
+        }
+        self.paths[schedule_path_id].last_block = sid;
+
+        return stream_to_send;
+    }
+
+    fn network_varied(&mut self, schedule_path_id: usize) -> bool {
+        if self.get_bandwidth(schedule_path_id) != self.paths[schedule_path_id].previous_bw
+            || self.paths[schedule_path_id].recovery.rtt().as_millis()
+                != self.paths[schedule_path_id].previous_rtt
+        {
+            self.paths[schedule_path_id].previous_bw = self.get_bandwidth(schedule_path_id);
+            self.paths[schedule_path_id].previous_rtt =
+                self.paths[schedule_path_id].recovery.rtt().as_millis();
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    /// Schedule to change the send_info
+    /// Re_schedule: need to empty the scheduled queues.
+    /// When new block comes and network varing heavily, re_schedule is true.
+    fn schedule_prio_mp(&mut self, re_schedule: bool) {
+        info!("--------schedule_prio_mp-------");
+        let mut block_to_send = true;
+        // Calculate all streams send time and fill in two paths.
+        let bw_f = self.get_bandwidth(0);
+        let bw_s = self.get_bandwidth(1);
+        let owd_f = self.one_way_delay_pm.get_owd_pred(0);
+        let owd_s = self.one_way_delay_pm.get_owd_pred(1);
+        // let bw = vec![bw_f, bw_s];
+
+        // get occupied time
+        let mut occupied_t_f = 0.0;
+        let mut occupied_t_s = 0.0;
+
+        if re_schedule {
+            info!("re-schedule");
+            let first_lastone = match self.send_info[0].front() {
+                Some(v) => v,
+
+                None => &SendInfoOnPath {
+                    streamid: 0,
+                    unsend_size: 0,
+                },
+            };
+
+            let second_lastone = match self.send_info[1].front() {
+                Some(v) => v,
+
+                None => &SendInfoOnPath {
+                    streamid: 0,
+                    unsend_size: 0,
+                },
+            };
+            self.paths[0].last_block = first_lastone.streamid;
+            self.paths[0].previous_unsend = first_lastone.unsend_size;
+            self.paths[1].last_block = second_lastone.streamid;
+            self.paths[1].previous_unsend = second_lastone.unsend_size;
+
+            self.send_info[0].clear();
+            self.send_info[1].clear();
+            for strict_queue in 0..MAXNUM_PRIORITY_QUEUE {
+                for i in 0..self.streams.priority_queues[strict_queue].len() {
+                    let &id = self.streams.priority_queues[strict_queue]
+                        .get(i)
+                        .unwrap();
+                    let stream = self.streams.get_mut(id).unwrap();
+                    stream.assigned = false;
+                }
+            }
+        }
+
+        for block_i in 0..self.send_info[0].len() {
+            occupied_t_f = occupied_t_f
+                + self.send_info[0][block_i].unsend_size as f64
+                    / bw_f
+                    / 1000.0;
+        }
+        for block_i in 0..self.send_info[1].len() {
+            occupied_t_s = occupied_t_s
+                + self.send_info[1][block_i].unsend_size as f64
+                    / bw_s
+                    / 1000.0;
+        }
+        while (self.send_info[0].is_empty()
+            || self.send_info[1].is_empty())
+            && block_to_send
+        {
+            match self.streams.peek_flushable_mp(
+                bw_f,
+                bw_s,
+                owd_f,
+                owd_s,
+                occupied_t_f,
+                occupied_t_s,
+            ) {
+                None => {
+                    block_to_send = false;
+                    info!("No block to be sent in priority queues.");
+                }
+                Some(stream_id) => {
+                    info!("stream: {} is chosen", stream_id);
+                    if stream_id == NONE_BLOCK {
+                        // Blocks in the buffer are either assigned, or will miss the deadline.
+                        info!("Blocks in the buffer are either assigned, or will miss the deadline.");
+                        info!("No blocks to be sent.");
+                        break;
+                    } else {
+                        'outer: for strict_queue in 0..MAXNUM_PRIORITY_QUEUE {
+                            for i in 0..self.streams.priority_queues[strict_queue]
+                                .len()
+                            {
+                                let &id = self.streams.priority_queues
+                                    [strict_queue]
+                                    .get(i)
+                                    .unwrap();
+                                if id != stream_id {
+                                    continue;
+                                }
+                                info!("Find id in priority queues");
+                                let stream =
+                                    self.streams.get_mut(stream_id).unwrap();
+                                let mut unsend_f =
+                                    ((stream.send_time[0] * bw_f)
+                                        .ceil()
+                                        * 1000.0)
+                                        as u64;
+                                info!(
+                                    "send len {} unsend_f {}",
+                                    stream.send.len, unsend_f
+                                );
+                                if unsend_f > stream.send.len {
+                                    unsend_f = stream.send.len;
+                                }
+                                let unsend_s = stream.send.len - unsend_f;
+                                if self.is_server {
+                                    if stream_id <= 200 * 4 + 1 {
+                                        self.send_info[0].push_back(
+                                            SendInfoOnPath {
+                                                streamid: stream_id,
+                                                unsend_size: stream.send.len / 2,
+                                            },
+                                        );
+                                        self.send_info[1].push_back(
+                                            SendInfoOnPath {
+                                                streamid: stream_id,
+                                                unsend_size: stream.send.len
+                                                    - stream.send.len / 2,
+                                            },
+                                        );
+                                        stream.assigned = true;
+                                    } else {
+                                        if unsend_f > 0 {
+                                            info!(
+                                                "push_back1 stream {} unsend {}",
+                                                stream_id, unsend_f
+                                            );
+                                            self.send_info[0]
+                                                .push_back(SendInfoOnPath {
+                                                    streamid: stream_id,
+                                                    unsend_size: unsend_f,
+                                                });
+                                            stream.assigned = true;
+                                        }
+                                        if unsend_s > 0 {
+                                            info!(
+                                                "push_back2 stream {} unsend {}",
+                                                stream_id, unsend_s
+                                            );
+                                            self.send_info[1]
+                                                .push_back(SendInfoOnPath {
+                                                    streamid: stream_id,
+                                                    unsend_size: unsend_s,
+                                                });
+                                            stream.assigned = true;
+                                        }
+                                    }
+                                } else {
+                                    self.send_info[0].push_back(
+                                        SendInfoOnPath {
+                                            streamid: stream_id,
+                                            unsend_size: stream.send.len / 2,
+                                        },
+                                    );
+                                    self.send_info[1].push_back(
+                                        SendInfoOnPath {
+                                            streamid: stream_id,
+                                            unsend_size: stream.send.len
+                                                - stream.send.len / 2,
+                                        },
+                                    );
+                                    stream.assigned = true;
+                                }
+
+                                break 'outer;
+                            }
+                        }
+                    }
+                }
+            }
+        } 
     }
 
     /// Processes QUIC packets received from the peer.
@@ -1249,7 +1584,7 @@ impl Connection {
     /// }
     /// # Ok::<(), quiche::Error>(())
     /// ```
-    pub fn recv(&mut self, buf: &mut [u8]) -> Result<usize> {
+    pub fn recv(&mut self, buf: &mut [u8], path: usize) -> Result<usize> {
         let len = buf.len();
 
         let mut done = 0;
@@ -1257,7 +1592,7 @@ impl Connection {
 
         // Process coalesced packets.
         while left > 0 {
-            let read = match self.recv_single(&mut buf[len - left..len]) {
+            let read = match self.recv_single(&mut buf[len - left..len], path) {
                 Ok(v) => v,
 
                 Err(Error::Done) => return Err(Error::Done),
@@ -1267,7 +1602,7 @@ impl Connection {
                     // the connection.
                     self.close(false, e.to_wire(), b"").ok();
                     return Err(e);
-                },
+                }
             };
 
             done += read;
@@ -1284,12 +1619,14 @@ impl Connection {
         if !self.verified_peer_address {
             self.max_send_bytes += buf.len() * MAX_AMPLIFICATION_FACTOR;
         }
-
+        // let test5 = time::Instant::now();
+        // info!("test5: {}", (test5 - test4).as_micros() as u64);
         Ok(done)
     }
 
     /// Processes a single QUIC packet received from the peer.
-    fn recv_single(&mut self, buf: &mut [u8]) -> Result<usize> {
+    fn recv_single(&mut self, buf: &mut [u8], path: usize) -> Result<usize> {
+        // let test_recv_single = time::Instant::now();
         let now = time::Instant::now();
 
         if buf.is_empty() {
@@ -1308,7 +1645,13 @@ impl Connection {
 
         let mut b = octets::Octets::with_slice(buf);
 
+        // let test_from_head = time::Instant::now();
         let mut hdr = Header::from_bytes(&mut b, self.scid.len())?;
+        // let test_from_head_end = time::Instant::now();
+        // info!(
+        //     "from_head: {}",
+        //     (test_from_head_end - test_recv_single).as_micros() as u64
+        // );
 
         if hdr.ty == packet::Type::VersionNegotiation {
             // Version negotiation packets can only be sent by the server.
@@ -1348,7 +1691,22 @@ impl Connection {
 
             // Reset connection state to force sending another Initial packet.
             self.got_peer_conn_id = false;
-            self.recovery.drop_unacked_data(packet::EPOCH_INITIAL);
+
+            // ----ZUO begin
+            // self.recovery.drop_unacked_data(packet::EPOCH_INITIAL);
+            let test_drop_unacked_data = time::Instant::now();
+            for path in 0..(PATH_NUM - 1) {
+                self.paths[path]
+                    .recovery
+                    .drop_unacked_data(packet::EPOCH_INITIAL);
+            }
+            let test_drop_unacked_data_end = time::Instant::now();
+            info!(
+                "drop_unacked_data: {}",
+                (test_drop_unacked_data_end - test_drop_unacked_data).as_micros()
+                    as u64
+            );
+            // ----ZUO end
             self.pkt_num_spaces[packet::EPOCH_INITIAL].clear();
             self.handshake.clear()?;
 
@@ -1393,7 +1751,16 @@ impl Connection {
 
             // Reset connection state to force sending another Initial packet.
             self.got_peer_conn_id = false;
-            self.recovery.drop_unacked_data(packet::EPOCH_INITIAL);
+
+            // ----ZUO begin
+            // self.recovery.drop_unacked_data(packet::EPOCH_INITIAL);
+            for path in 0..(PATH_NUM - 1) {
+                self.paths[path]
+                    .recovery
+                    .drop_unacked_data(packet::EPOCH_INITIAL);
+            }
+            // ----ZUO end
+
             self.pkt_num_spaces[packet::EPOCH_INITIAL].clear();
             self.handshake.clear()?;
 
@@ -1442,6 +1809,11 @@ impl Connection {
             self.dcid.resize(hdr.scid.len(), 0);
             self.dcid.copy_from_slice(&hdr.scid);
 
+            println!("--------------------update initial_path PDCID-----------------------");
+            // TODO: update initial_path PDCID(client)
+            self.paths[0].dcid.resize(hdr.scid.len(), 0);
+            self.paths[0].dcid.copy_from_slice(&hdr.scid);
+
             self.got_peer_conn_id = true;
         }
 
@@ -1457,6 +1829,12 @@ impl Connection {
 
             self.derived_initial_secrets = true;
 
+            // TODO: update initial_path PDCID(server)
+            self.paths[0].dcid.resize(hdr.scid.len(), 0);
+            // println!("{}", hdr.scid.len());
+            // println!("{}", self.paths[0].get_dcid().to_vec().len());
+            self.paths[0].dcid.copy_from_slice(&hdr.scid);
+
             self.dcid.extend_from_slice(&hdr.scid);
             self.got_peer_conn_id = true;
         }
@@ -1464,8 +1842,8 @@ impl Connection {
         // Select packet number space epoch based on the received packet's type.
         let epoch = hdr.ty.to_epoch()?;
 
-        let aead = if hdr.ty == packet::Type::ZeroRTT &&
-            self.pkt_num_spaces[epoch].crypto_0rtt_open.is_some()
+        let aead = if hdr.ty == packet::Type::ZeroRTT
+            && self.pkt_num_spaces[epoch].crypto_0rtt_open.is_some()
         {
             self.pkt_num_spaces[epoch]
                 .crypto_0rtt_open
@@ -1492,19 +1870,31 @@ impl Connection {
                     );
 
                     return Ok(header_len + payload_len);
-                },
+                }
             }
         };
 
         let aead_tag_len = aead.alg().tag_len();
 
+        // let test_decode_pkt = time::Instant::now();
         packet::decrypt_hdr(&mut b, &mut hdr, &aead)?;
 
+        // let pn = packet::decode_pkt_num(
+        //     self.pkt_num_spaces[epoch].largest_rx_pkt_num,
+        //     hdr.pkt_num,
+        //     hdr.pkt_num_len,
+        // );
         let pn = packet::decode_pkt_num(
-            self.pkt_num_spaces[epoch].largest_rx_pkt_num,
-            hdr.pkt_num,
-            hdr.pkt_num_len,
-        );
+                self.pkt_num_spaces[epoch].largest_rx_pkt_num[path],
+                hdr.pkt_num,
+                hdr.pkt_num_len,
+            );
+
+        // let test_decode_pkt_end = time::Instant::now();
+        // info!(
+        //     "decode_pkt: {}",
+        //     (test_decode_pkt_end - test_decode_pkt).as_micros() as u64
+        // );
 
         let pn_len = hdr.pkt_num_len;
 
@@ -1539,12 +1929,13 @@ impl Connection {
                     );
 
                     return Err(Error::Done);
-                },
+                }
             };
 
+        info!("contain pn {}", pn);
         if self.pkt_num_spaces[epoch].recv_pkt_num.contains(pn) {
             trace!("{} ignored duplicate packet {}", self.trace_id, pn);
-            return Err(Error::Done);
+            // return Err(Error::Done);
         }
 
         // To avoid sending an ACK in response to an ACK-only packet, we need
@@ -1553,96 +1944,114 @@ impl Connection {
         let mut ack_elicited = false;
 
         // Process packet payload.
-        // check if this is the FEC frame.
-        if hdr.fec_info.group_id != 0 {
-            ack_elicited = true;
-            // find fec group.
-            let fec_group = self
-                .fec_decoders
-                .entry(hdr.fec_info.group_id)
-                .or_insert(fec::FecGroup::new(hdr.fec_info, payload.cap()));
-            // feed into the fec group.
-            let fec_frame = fec::FecFrame {
-                info: hdr.fec_info,
-                data: payload.to_vec(),
-            };
-            fec_group.feed_fec_frame(&fec_frame);
-            // Try to decode
-            if let Some(shards) = fec_group.reconstruct() {
-                debug!("restored");
-                for mut shard in shards {
-                    let mut restored = octets::Octets::with_slice(&mut shard);
-                    debug!("shard 0");
-                    while restored.cap() > 0 {
-                        let frame = frame::Frame::from_bytes(
-                            &mut restored,
-                            packet::Type::Short,
-                        )?;
-                        // Remove ack illicited
+        // let test_process_payload = time::Instant::now();
+        while payload.cap() > 0 {
+            let frame = frame::Frame::from_bytes(&mut payload, hdr.ty)?;
 
-                        self.process_frame(frame, epoch, now)?;
-                    }
-                }
+            if frame.ack_eliciting() {
+                ack_elicited = true;
             }
+
+            info!("while path {}", path);
+
+            self.process_frame(frame, epoch, now, path)?;
         }
-
-        if hdr.fec_info.group_id == 0 ||
-            (hdr.fec_info.group_id != 0 && hdr.fec_info.index < hdr.fec_info.m)
-        {
-            while payload.cap() > 0 {
-                let frame = frame::Frame::from_bytes(&mut payload, hdr.ty)?;
-
-                if frame.ack_eliciting() {
-                    ack_elicited = true;
-                }
-
-                self.process_frame(frame, epoch, now)?;
-            }
-        } else {
-            // FEC redundant packet
-            // just advance the buffer.
-            payload.get_bytes(payload.cap()).unwrap();
-        }
+        // let test_process_payload_end = time::Instant::now();
+        // info!(
+        //     "process_payload: {}",
+        //     (test_process_payload_end - test_process_payload).as_micros() as u64
+        // );
 
         // Process acked frames.
-        for acked in self.recovery.acked[epoch].drain(..) {
-            match acked {
-                frame::Frame::ACK { ranges, .. } => {
-                    // Stop acknowledging packets less than or equal to the
-                    // largest acknowledged in the sent ACK frame that, in
-                    // turn, got acked.
-                    if let Some(largest_acked) = ranges.largest() {
+        // for acked in self.recovery.acked[epoch].drain(..) {
+        //     match acked {
+        //         frame::Frame::ACK { ranges, .. } => {
+        //             // Stop acknowledging packets less than or equal to the
+        //             // largest acknowledged in the sent ACK frame that, in
+        //             // turn, got acked.
+        //             if let Some(largest_acked) = ranges.largest() {
+        //                 self.pkt_num_spaces[epoch]
+        //                     .recv_pkt_need_ack
+        //                     .remove_until(largest_acked);
+        //             }
+        //         },
+
+        //         frame::Frame::Crypto { data } => {
+        //             self.pkt_num_spaces[epoch]
+        //                 .crypto_stream
+        //                 .send
+        //                 .ack(data.off(), data.len());
+        //         },
+
+        //         frame::Frame::Stream { stream_id, data } => {
+        //             let stream = match self.streams.get_mut(stream_id) {
+        //                 Some(v) => v,
+
+        //                 None => continue,
+        //             };
+
+        //             stream.send.ack(data.off(), data.len());
+
+        //             if stream.is_complete() {
+        //                 let local = stream.local;
+        //                 self.streams.collect(stream_id, local);
+        //             }
+        //         },
+
+        //         _ => (),
+        //     }
+        // }
+
+        let test_ack_for = time::Instant::now();
+        for path in 0..(PATH_NUM - 1) {
+            for acked in self.paths[path].recovery.acked[epoch].drain(..) {
+                match acked {
+                    frame::Frame::ACK { ranges, .. } => {
+                        // Stop acknowledging packets less than or equal to the
+                        // largest acknowledged in the sent ACK frame that, in
+                        // turn, got acked.
+                        if let Some(largest_acked) = ranges.largest() {
+                            info!("largest_acked {}", largest_acked);
+                            self.pkt_num_spaces[epoch]
+                                .path_need_ack_pkt[path]
+                                .remove_until(largest_acked);
+                            info!("first remove until");
+                        }
+                    }
+
+                    frame::Frame::Crypto { data } => {
                         self.pkt_num_spaces[epoch]
-                            .recv_pkt_need_ack
-                            .remove_until(largest_acked);
+                            .crypto_stream
+                            .send
+                            .ack(data.off(), data.len());
                     }
-                },
 
-                frame::Frame::Crypto { data } => {
-                    self.pkt_num_spaces[epoch]
-                        .crypto_stream
-                        .send
-                        .ack(data.off(), data.len());
-                },
+                    frame::Frame::Stream { stream_id, data } => {
+                        let stream = match self.streams.get_mut(stream_id) {
+                            Some(v) => v,
 
-                frame::Frame::Stream { stream_id, data } => {
-                    let stream = match self.streams.get_mut(stream_id) {
-                        Some(v) => v,
+                            None => continue,
+                        };
 
-                        None => continue,
-                    };
+                        stream.send.ack(data.off(), data.len());
 
-                    stream.send.ack(data.off(), data.len());
-
-                    if stream.is_complete() {
-                        let local = stream.local;
-                        self.streams.collect(stream_id, local);
+                        if stream.is_complete() {
+                            let local = stream.local;
+                            self.streams.collect(stream_id, local);
+                        }
                     }
-                },
 
-                _ => (),
+                    _ => (),
+                }
             }
+
         }
+
+        let test_ack_for_end = time::Instant::now();
+        info!(
+            "ack_for: {}",
+            (test_ack_for_end - test_ack_for).as_micros() as u64
+        );
 
         // We only record the time of arrival of the largest packet number
         // that still needs to be acked, to be used for ACK delay calculation.
@@ -1650,15 +2059,29 @@ impl Connection {
             self.pkt_num_spaces[epoch].largest_rx_pkt_time = now;
         }
 
+        info!("insert pkt {}", pn);
         self.pkt_num_spaces[epoch].recv_pkt_num.insert(pn);
 
         self.pkt_num_spaces[epoch].recv_pkt_need_ack.push_item(pn);
-        self.pkt_num_spaces[epoch].ack_elicited =
-            cmp::max(self.pkt_num_spaces[epoch].ack_elicited, ack_elicited);
+        info!("path: {}", path);
+        self.pkt_num_spaces[epoch]
+            .path_need_ack_pkt[path]
+            .push_item(pn);
+        self.pkt_num_spaces[epoch].ack_elicited[path] = cmp::max(
+            self.pkt_num_spaces[epoch].ack_elicited[path],
+            ack_elicited,
+        );
 
-        self.pkt_num_spaces[epoch].largest_rx_pkt_num =
-            cmp::max(self.pkt_num_spaces[epoch].largest_rx_pkt_num, pn);
+        info!("receiving pkt:{}", pn);
 
+        // self.pkt_num_spaces[epoch].ack_elicited =
+        //     cmp::max(self.pkt_num_spaces[epoch].ack_elicited, ack_elicited);
+
+        // self.pkt_num_spaces[epoch].largest_rx_pkt_num =
+        //     cmp::max(self.pkt_num_spaces[epoch].largest_rx_pkt_num, pn);
+        self.pkt_num_spaces[epoch].largest_rx_pkt_num[path] =
+            cmp::max(self.pkt_num_spaces[epoch].largest_rx_pkt_num[path], pn);
+        
         if let Some(idle_timeout) = self.idle_timeout() {
             self.idle_timer = Some(now + idle_timeout);
         }
@@ -1671,13 +2094,18 @@ impl Connection {
         // successfully processed, so we can drop the initial state and consider
         // the client's address to be verified.
         if self.is_server && hdr.ty == packet::Type::Handshake {
+            info!("drop1");
             self.drop_epoch_state(packet::EPOCH_INITIAL);
 
             self.verified_peer_address = true;
         }
 
         self.ack_eliciting_sent = false;
-
+        // let test_recv_single_end = time::Instant::now();
+        // info!(
+        //     "test_recv_single: {}",
+        //     (test_recv_single_end - test_recv_single).as_micros() as u64
+        // );
         Ok(read)
     }
 
@@ -1732,8 +2160,11 @@ impl Connection {
     /// }
     /// # Ok::<(), quiche::Error>(())
     /// ```
-    pub fn send(&mut self, out: &mut [u8]) -> Result<usize> {
-        let mut now = time::Instant::now();
+    pub fn send(
+        &mut self, out: &mut [u8], schedule_path_id: usize,
+    ) -> Result<usize> {
+        // let test9 = time::Instant::now();
+        let now = time::Instant::now();
 
         if out.is_empty() {
             return Err(Error::BufferTooShort);
@@ -1772,81 +2203,101 @@ impl Connection {
 
         // Cap output buffer to respect peer's max_packet_size limit.
         let avail = cmp::min(max_pkt_len, out.len());
+        // info!("avail {}", avail);
 
         let mut b = octets::Octets::with_slice(&mut out[..avail]);
 
-        let epoch = self.write_epoch()?;
+        let epoch = self.write_epoch(schedule_path_id)?;
+
+        info!("epoch: {}", epoch);
 
         let pkt_type = packet::Type::from_epoch(epoch);
 
-        // Process lost frames.
-        for lost in self.recovery.lost[epoch].drain(..) {
-            match lost {
-                frame::Frame::Crypto { data } => {
-                    self.pkt_num_spaces[epoch].crypto_stream.send.push(data)?;
-                },
-
-                frame::Frame::BlockInfo { stream_id, .. } => {
-                    let stream = match self.streams.get_mut(stream_id) {
-                        Some(v) => v,
-                        None => continue,
-                    };
-                    stream.send.info_frame_lost();
-                },
-
-                frame::Frame::ResetStream { .. } => {
-                    // todo: process ResetStream Frame
-                },
-
-                frame::Frame::Stream { stream_id, data } => {
-                    let stream = match self.streams.get_mut(stream_id) {
-                        Some(v) => v,
-
-                        None => continue,
-                    };
-
-                    // TODO: due to a packet loss edge case the following could
-                    // go negative, though it's not clear why, so will need to
-                    // figure it out.
-                    self.tx_data = self.tx_data.saturating_sub(data.len() as u64);
-
-                    let was_flushable = stream.is_flushable();
-
-                    let empty_fin = data.is_empty() && data.fin();
-
-                    stream.send.push(data)?;
-
-                    // If the stream is now flushable push it to the flushable
-                    // queue, but only if it wasn't already queued.
-                    //
-                    // Consider the stream flushable also when we are sending a
-                    // zero-length frame that has the fin flag set.
-                    if (stream.is_flushable() || empty_fin) && !was_flushable {
-                        self.streams.push_flushable(stream_id);
+        // Zuo: Whether lost pkt exists. If a frame is lost, re-schedule.
+        let mut lost_block = false;
+        for path in 0..(PATH_NUM - 1) {
+            for lost in self.paths[path].recovery.lost[epoch].drain(..) {
+                match lost {
+                    frame::Frame::Crypto { data } => {
+                        self.pkt_num_spaces[epoch].crypto_stream.send.push(data)?;
                     }
-                },
 
-                frame::Frame::ACK { .. } => {
-                    self.pkt_num_spaces[epoch].ack_elicited = true;
-                },
+                    frame::Frame::BlockInfo { stream_id, .. } => {
+                        let stream = match self.streams.get_mut(stream_id) {
+                            Some(v) => v,
+                            None => continue,
+                        };
+                        stream.send.info_frame_lost();
+                    }
 
-                frame::Frame::HandshakeDone => {
-                    self.handshake_done_sent = false;
-                },
+                    frame::Frame::ResetStream { stream_id, .. } => {
+                        self.streams.mark_canceled(stream_id, true);
+                    }
 
-                _ => (),
+                    frame::Frame::Stream { stream_id, data } => {
+                        let stream = match self.streams.get_mut(stream_id) {
+                            Some(v) => v,
+
+                            None => continue,
+                        };
+
+                        // TODO: due to a packet loss edge case the following could
+                        // go negative, though it's not clear why, so will need to
+                        // figure it out.
+                        self.tx_data = self.tx_data.saturating_sub(data.len() as u64);
+
+                        // info!("tx_data {}", self.tx_data);
+
+                        let was_flushable = stream.is_flushable();
+
+                        let empty_fin = data.is_empty() && data.fin();
+
+                        stream.send.push(data)?;
+
+                        // If the stream is now flushable push it to the flushable
+                        // queue, but only if it wasn't already queued.
+                        //
+                        // Consider the stream flushable also when we are sending a
+                        // zero-length frame that has the fin flag set.
+                        if (stream.is_flushable() || empty_fin) && !was_flushable {
+                            let pq = stream.send.priority;
+                            info!("pq1 {}", pq);
+                            self.streams.push_flushable(stream_id, pq);
+                        }
+
+                        lost_block = true;
+                    }
+
+                    frame::Frame::ACK { .. } => {
+                        self.pkt_num_spaces[epoch].ack_elicited[path] = true;
+                    }
+
+                    frame::Frame::HandshakeDone => {
+                        self.handshake_done_sent = false;
+                    }
+
+                    _ => (),
+                }
             }
+
         }
 
+        // let process_lost_frame = time::Instant::now();
+        // info!(
+        //     "process lost frame: {}",
+        //     (process_lost_frame - test_first_for).as_micros() as u64
+        // );
+
         // Calculate available space in the packet based on congestion window.
-        let mut left = if self.recovery.loss_probes[epoch] > 0 && !is_closing {
-            // sending probe packets might cause the sender's bytes in flight to
-            // exceed the congestion window
-            trace!("will send probe.");
-            b.cap()
-        } else {
-            cmp::min(self.recovery.cwnd_available(), b.cap())
-        };
+        // let mut left = cmp::min(self.recovery.cwnd_available(), b.cap());
+        // corresponding path cwnd
+        // let test_send_process_lost_time = time::Instant::now();
+        let cwnd_now = self.paths[schedule_path_id].recovery.cwnd_available() as usize;
+
+        let mut left = cmp::min(cwnd_now, b.cap());
+        // info!("remaining capacity in the buffer {}", b.cap());
+        info!("path {} cwnd_now {}", schedule_path_id, cwnd_now);
+        info!("left {}", left);
 
         // Limit data sent by the server based on the amount of data received
         // from the client before its address is validated.
@@ -1866,24 +2317,29 @@ impl Connection {
                     "send:Error::Done:self.pkt_num_spaces[epoch].overhead() None"
                 );
                 return Err(Error::Done);
-            },
+            }
         };
 
-        // Fetch FEC frame.
-        let mut hdr = Header {
+        let hdr = Header {
             ty: pkt_type,
             version: self.version,
-            dcid: self.dcid.clone(),
-            scid: self.scid.clone(),
+            // dcid: self.dcid.clone(),
+            // scid: self.scid.clone(),
+            dcid: self.paths[schedule_path_id].get_dcid().to_vec().clone(),
+            scid: self.paths[schedule_path_id].get_scid().to_vec().clone(),
             pkt_num: 0,
             pkt_num_len: pn_len,
             token: self.token.clone(),
             versions: None,
             key_phase: false,
-            fec_info: Default::default(),
         };
 
         hdr.to_bytes(&mut b)?;
+        // let test_get_head_end = time::Instant::now();
+        // info!(
+        //     "test_get_head: {}",
+        //     (test_get_head_end - test_get_head).as_micros() as u64
+        // );
 
         // Make sure we have enough space left for the header, the payload
         // length, the packet number and the AEAD overhead.
@@ -1892,8 +2348,9 @@ impl Connection {
             None => {
                 trace!("send:Error::Done no enough space for header...overhead:{}   left:{}",b.off() + pn_len + overhead,left);
                 return Err(Error::Done);
-            },
+            }
         };
+        //.ok_or(Error::Done)?;
 
         // We assume that the payload length, which is only present in long
         // header packets, can always be encoded with a 2-byte varint.
@@ -1904,107 +2361,200 @@ impl Connection {
                 None => {
                     trace!("send:Error::Done: checked_sub(2)");
                     return Err(Error::Done);
-                },
+                }
             };
         }
+        // let test_left = time::Instant::now();
+        // info!(
+        //     "test_left: {}",
+        //     (test_left - test_get_head_end).as_micros() as u64
+        // );
+
+        // let test_record_packet_end = time::Instant::now();
+        // info!(
+        //     "test_record_packet: {}",
+        //     (test_record_packet_end - test_record_packet).as_micros() as u64
+        // );
 
         let mut frames: Vec<frame::Frame> = Vec::new();
 
         let mut ack_eliciting = false;
         let mut in_flight = false;
-        let mut m = 0;
-        let mut n = 0;
 
         let mut payload_len = 0;
 
-        if let Some(redundancy) = self.fec_encoded.pop_front() {
-            if redundancy.data.len() <= left {
-                let fec_frame = frame::Frame::Fec {
-                    info: redundancy.info,
-                    data: redundancy.data,
-                };
-                payload_len += fec_frame.wire_len();
-                left -= fec_frame.wire_len();
-                ack_eliciting = true;
-                in_flight = true;
-                frames.push(fec_frame);
-                hdr.fec_info = redundancy.info;
-                packet::update_fec_info(&mut b, &hdr)?;
-            } else {
-                self.fec_encoded.push_front(redundancy);
-                return Err(Error::Done);
-            }
-        } else {
-            // no FEC frame, go the normal path.
-            // Create ACK frame.
-            if (self.pkt_num_spaces[epoch].ack_elicited ||
-                (!self.pkt_num_spaces[epoch].recv_pkt_need_ack.is_empty() &&
-                    pn % Connection::get_data_ack_ratio(self.init_data_ack_ratio) == 0)) &&
-                !is_closing
-            {
-                let ack_delay =
-                    self.pkt_num_spaces[epoch].largest_rx_pkt_time.elapsed();
+        // Create ACK frame.
+        // let test_ack_frame = time::Instant::now();
+        // info!(
+        //     "test_new_frame: {}",
+        //     (test_ack_frame - test_record_packet_end).as_micros() as u64
+        // );
+        info!("epoch {}", epoch);
+        info!("schedule path {}", schedule_path_id);
+        info!(
+            "first ack elicited {}",
+            self.pkt_num_spaces[epoch].ack_elicited[0]
+        );
+        info!(
+            "second ack elicited {}",
+            self.pkt_num_spaces[epoch].ack_elicited[1]
+        );
+        let path_with_ack_elicited = self.pkt_num_spaces[epoch].ack_elicited[schedule_path_id];
+        if path_with_ack_elicited && !is_closing {
+            // info!("creating ack frame");
+            info!(
+                "acked pkts this time{:?}",
+                self.pkt_num_spaces[epoch].recv_pkt_need_ack
+            );
+            info!(
+                "acked pkts on first path {:?}",
+                self.pkt_num_spaces[epoch].path_need_ack_pkt[0]
+            );
+            info!(
+                "acked pkts on second path {:?}",
+                self.pkt_num_spaces[epoch].path_need_ack_pkt[1]
+            );
 
-                let scale = 2_u64
-                    .pow(self.local_transport_params.ack_delay_exponent as u32);
+            let ack_delay =
+                self.pkt_num_spaces[epoch].largest_rx_pkt_time.elapsed();
 
-                let ack_time = match time::SystemTime::now()
-                    .duration_since(time::UNIX_EPOCH)
-                {
+            let scale =
+                2_u64.pow(self.local_transport_params.ack_delay_exponent as u32);
+
+            let ack_time =
+                match time::SystemTime::now().duration_since(time::UNIX_EPOCH) {
                     Ok(n) => n,
                     Err(_) => panic!("SystemTime before UNIX EPOCH!"),
                 };
-                let packet_time =
-                    ack_time.as_micros() as u64 - ack_delay.as_micros() as u64;
-                trace!(
-                    "packet_time={},ack_delay={}",
-                    packet_time,
-                    ack_delay.as_micros()
-                );
-                let ack_delay = ack_delay.as_micros() as u64 / scale;
-                let packet_time = packet_time / scale;
+            let packet_time =
+                ack_time.as_micros() as u64 - ack_delay.as_micros() as u64;
+            trace!(
+                "packet_time={},ack_delay={}",
+                packet_time,
+                ack_delay.as_micros()
+            );
+            let ack_delay = ack_delay.as_micros() as u64 / scale;
+            let packet_time = packet_time / scale;
 
-                let frame = frame::Frame::ACK {
-                    packet_time,
-                    ack_delay,
-                    ranges: self.pkt_num_spaces[epoch].recv_pkt_need_ack.clone(),
+            let frame = frame::Frame::ACK {
+                packet_time,
+                ack_delay,
+                ranges: self.pkt_num_spaces[epoch].path_need_ack_pkt[schedule_path_id].clone(),
+            };
+
+            info!("frame: {:?}", frame);
+
+            if frame.wire_len() <= left {
+                // self.pkt_num_spaces[epoch].ack_elicited = false;
+                self.pkt_num_spaces[epoch].ack_elicited[schedule_path_id] = false;
+
+                payload_len += frame.wire_len();
+                left -= frame.wire_len();
+
+                info!("push ack frame");
+                frames.push(frame);
+            }
+        }
+        // let test_ack_frame_end = time::Instant::now();
+        // info!(
+        //     "test_ack_frame: {}",
+        //     (test_ack_frame_end - test_ack_frame).as_micros() as u64
+        // );
+
+        // Create ResetStream frame, when canceled miss-deadline blocks
+        if self.streams.has_canceled() {
+            for stream_id in self.streams.canceled() {
+                let stream = match self.streams.get_mut(stream_id) {
+                    Some(v) => v,
+
+                    None => {
+                        // The stream doesn't exist anymore, so remove it from
+                        // the almost full set.
+                        self.streams.mark_canceled(stream_id, false);
+                        continue;
+                    }
+                };
+
+                let frame = frame::Frame::ResetStream {
+                    stream_id,
+                    error_code: 1, // todo:error code of miss deadline
+                    final_size: stream.send.block_size(),
+                };
+
+                self.streams.mark_canceled(stream_id, false);
+
+                if frame.wire_len() > left {
+                    break;
+                }
+
+                payload_len += frame.wire_len();
+                left -= frame.wire_len();
+
+                frames.push(frame);
+
+                ack_eliciting = true;
+                in_flight = true;
+            }
+        }
+        // let test_teset_frame = time::Instant::now();
+        // info!(
+        //     "test_teset_frame: {}",
+        //     (test_teset_frame - test_ack_frame_end).as_micros() as u64
+        // );
+
+        if pkt_type == packet::Type::Short && !is_closing {
+            // Create HANDSHAKE_DONE frame.
+            if self.is_established()
+                && !self.handshake_done_sent
+                && self.is_server
+                && self.version >= PROTOCOL_VERSION_DRAFT25
+            {
+                let frame = frame::Frame::HandshakeDone;
+
+                payload_len += frame.wire_len();
+                left -= frame.wire_len();
+
+                frames.push(frame);
+
+                self.handshake_done_sent = true;
+            }
+
+            // Create MAX_STREAMS_BIDI frame.
+            if self.streams.should_update_max_streams_bidi() {
+                let max = self.streams.update_max_streams_bidi();
+                let frame = frame::Frame::MaxStreamsBidi { max };
+
+                payload_len += frame.wire_len();
+                left -= frame.wire_len();
+
+                frames.push(frame);
+
+                ack_eliciting = true;
+                in_flight = true;
+            }
+
+            // Create MAX_STREAMS_UNI frame.
+            if self.streams.should_update_max_streams_uni() {
+                let max = self.streams.update_max_streams_uni();
+                let frame = frame::Frame::MaxStreamsUni { max };
+
+                payload_len += frame.wire_len();
+                left -= frame.wire_len();
+
+                frames.push(frame);
+
+                ack_eliciting = true;
+                in_flight = true;
+            }
+
+            // Create MAX_DATA frame as needed.
+            if self.should_update_max_data() {
+                let frame = frame::Frame::MaxData {
+                    max: self.max_rx_data_next,
                 };
 
                 if frame.wire_len() <= left {
-                    self.pkt_num_spaces[epoch].ack_elicited = false;
-
-                    payload_len += frame.wire_len();
-                    left -= frame.wire_len();
-
-                    frames.push(frame);
-                }
-            }
-
-            // Create ResetStream frame, when canceled miss-deadline blocks
-            if self.streams.has_canceled() {
-                for stream_id in self.streams.canceled() {
-                    let stream = match self.streams.get_mut(stream_id) {
-                        Some(v) => v,
-
-                        None => {
-                            // The stream doesn't exist anymore, so remove it from
-                            // the almost full set.
-                            self.streams.mark_canceled(stream_id, false);
-                            continue;
-                        },
-                    };
-
-                    let frame = frame::Frame::ResetStream {
-                        stream_id,
-                        error_code: 1, // todo:error code of miss deadline
-                        final_size: stream.send.block_size(),
-                    };
-
-                    self.streams.mark_canceled(stream_id, false);
-
-                    if frame.wire_len() > left {
-                        break;
-                    }
+                    self.max_rx_data = self.max_rx_data_next;
 
                     payload_len += frame.wire_len();
                     left -= frame.wire_len();
@@ -2016,350 +2566,29 @@ impl Connection {
                 }
             }
 
-            if pkt_type == packet::Type::Short && !is_closing {
-                // Create HANDSHAKE_DONE frame.
-                if self.is_established() &&
-                    !self.handshake_done_sent &&
-                    self.is_server &&
-                    self.version >= PROTOCOL_VERSION_DRAFT25
-                {
-                    let frame = frame::Frame::HandshakeDone;
+            // Create MAX_STREAM_DATA frames as needed.
+            for stream_id in self.streams.almost_full() {
+                let stream = match self.streams.get_mut(stream_id) {
+                    Some(v) => v,
 
-                    payload_len += frame.wire_len();
-                    left -= frame.wire_len();
-
-                    frames.push(frame);
-
-                    self.handshake_done_sent = true;
-                }
-
-                // Create MAX_STREAMS_BIDI frame.
-                if self.streams.should_update_max_streams_bidi() {
-                    let max = self.streams.update_max_streams_bidi();
-                    let frame = frame::Frame::MaxStreamsBidi { max };
-
-                    payload_len += frame.wire_len();
-                    left -= frame.wire_len();
-
-                    frames.push(frame);
-
-                    ack_eliciting = true;
-                    in_flight = true;
-                }
-
-                // Create MAX_STREAMS_UNI frame.
-                if self.streams.should_update_max_streams_uni() {
-                    let max = self.streams.update_max_streams_uni();
-                    let frame = frame::Frame::MaxStreamsUni { max };
-
-                    payload_len += frame.wire_len();
-                    left -= frame.wire_len();
-
-                    frames.push(frame);
-
-                    ack_eliciting = true;
-                    in_flight = true;
-                }
-
-                // Create MAX_DATA frame as needed.
-                if self.should_update_max_data() {
-                    let frame = frame::Frame::MaxData {
-                        max: self.max_rx_data_next,
-                    };
-
-                    if frame.wire_len() <= left {
-                        self.max_rx_data = self.max_rx_data_next;
-
-                        payload_len += frame.wire_len();
-                        left -= frame.wire_len();
-
-                        frames.push(frame);
-
-                        ack_eliciting = true;
-                        in_flight = true;
-                    }
-                }
-
-                // Create MAX_STREAM_DATA frames as needed.
-                for stream_id in self.streams.almost_full() {
-                    let stream = match self.streams.get_mut(stream_id) {
-                        Some(v) => v,
-
-                        None => {
-                            // The stream doesn't exist anymore, so remove it from
-                            // the almost full set.
-                            self.streams.mark_almost_full(stream_id, false);
-                            continue;
-                        },
-                    };
-
-                    let frame = frame::Frame::MaxStreamData {
-                        stream_id,
-                        max: stream.recv.update_max_data() as u64,
-                    };
-
-                    self.streams.mark_almost_full(stream_id, false);
-
-                    if frame.wire_len() > left {
-                        break;
-                    }
-
-                    payload_len += frame.wire_len();
-                    left -= frame.wire_len();
-
-                    frames.push(frame);
-
-                    ack_eliciting = true;
-                    in_flight = true;
-                }
-            }
-
-            // Create CONNECTION_CLOSE frame.
-            if let Some(err) = self.error {
-                let frame = frame::Frame::ConnectionClose {
-                    error_code: err,
-                    frame_type: 0,
-                    reason: Vec::new(),
-                };
-
-                if left > frame.wire_len() {
-                    payload_len += frame.wire_len();
-                    left -= frame.wire_len();
-
-                    frames.push(frame);
-
-                    self.challenge = None;
-
-                    ack_eliciting = true;
-                    in_flight = true;
-                }
-            }
-
-            // Create APPLICATION_CLOSE frame.
-            if let Some(err) = self.app_error {
-                if pkt_type == packet::Type::Short {
-                    let frame = frame::Frame::ApplicationClose {
-                        error_code: err,
-                        reason: self.app_reason.clone(),
-                    };
-
-                    payload_len += frame.wire_len();
-                    left -= frame.wire_len();
-
-                    frames.push(frame);
-
-                    self.draining_timer = Some(now + (self.recovery.pto() * 3));
-
-                    ack_eliciting = true;
-                    in_flight = true;
-                }
-            }
-
-            // Create PATH_RESPONSE frame.
-            if let Some(ref challenge) = self.challenge {
-                let frame = frame::Frame::PathResponse {
-                    data: challenge.clone(),
-                };
-
-                if left > frame.wire_len() {
-                    payload_len += frame.wire_len();
-                    left -= frame.wire_len();
-
-                    frames.push(frame);
-
-                    self.challenge = None;
-
-                    ack_eliciting = true;
-                    in_flight = true;
-                }
-            }
-
-            // Create CRYPTO frame.
-            if self.pkt_num_spaces[epoch].crypto_stream.is_flushable() &&
-                left > frame::MAX_CRYPTO_OVERHEAD &&
-                !is_closing
-            {
-                let crypto_len = left - frame::MAX_CRYPTO_OVERHEAD;
-                let crypto_buf = self.pkt_num_spaces[epoch]
-                    .crypto_stream
-                    .send
-                    .pop(crypto_len)?;
-
-                let frame = frame::Frame::Crypto { data: crypto_buf };
-
-                payload_len += frame.wire_len();
-                left -= frame.wire_len();
-
-                frames.push(frame);
-
-                ack_eliciting = true;
-                in_flight = true;
-            }
-            // Create a single STREAM frame for the first stream that is
-            // flushable.
-            if pkt_type == packet::Type::Short &&
-                self.max_tx_data > self.tx_data &&
-                left > frame::MAX_STREAM_OVERHEAD &&
-                !is_closing
-            {
-                let stats = self.stats();
-                let rtt = stats.rtt.as_micros() as f64 / 1000.0;
-                // let bandwidth = stats.cwnd as f64 / rtt; // kb/s or bytes/ms
-
-                let bandwidth =
-                    self.recovery.cc.pacing_rate() as f64 / 8.0 / 1024.0; // bps->KB/s
-                let now_time_ms = match time::SystemTime::now()
-                    .duration_since(time::SystemTime::UNIX_EPOCH)
-                {
-                    Ok(n) => n.as_millis(),
-                    Err(_) => panic!("SystemTime before UNIX EPOCH!"),
-                };
-                debug!("bw: {} KB/s; timestamp: {} ms", bandwidth, now_time_ms);
-
-                debug!(
-                    "RTT: {} ms, bbr_min_rtt: {} ms",
-                    rtt,
-                    self.recovery.cc.bbr_min_rtt().as_millis()
-                );
-                while let Some(stream_id) = self.streams.peek_flushable(
-                    bandwidth as f64,
-                    rtt,
-                    pn, // next_packet_id
-                    now_time_ms as u64,
-                )? {
-                    let stream = match self.streams.get_mut(stream_id) {
-                        Some(v) => v,
-
-                        None => continue,
-                    };
-                    if stream.send.is_new() {
-                        // Create BlockInfo frame
-                        let (block_priority, block_deadline) =
-                            stream.send.get_block_info();
-                        let frame = frame::Frame::BlockInfo {
-                            stream_id,
-                            block_size: stream.send.block_size() as u64,
-                            block_priority,
-                            block_deadline,
-                            // start_time: stream.send.start_time() as u64,
-                            start_time: (stream.send.start_time() as i128 -
-                                self.bct_offset) 
-                                as u64,
-                        };
-                        if frame.wire_len() <= left {
-                            payload_len += frame.wire_len();
-                            left -= frame.wire_len();
-                            frames.push(frame);
-                            ack_eliciting = true;
-                            in_flight = true;
-                            stream.send.un_new()
-                        }
-                    }
-                    if !(left > frame::MAX_STREAM_OVERHEAD) {
-                        if stream.is_flushable() {
-                            self.streams.push_flushable(stream_id);
-                        }
-                        break;
-                    }
-                    // Make sure we can fit the data in the packet.
-                    let max_len = cmp::min(
-                        left,
-                        (self.max_tx_data - self.tx_data) as usize,
-                    );
-
-                    let off = stream.send.off();
-
-                    // Try to accurately account for the STREAM frame's overhead,
-                    // such that we can fill as much of the packet buffer as
-                    // possible.
-                    let overhead = 1 +
-                        octets::varint_len(stream_id) +
-                        octets::varint_len(off) +
-                        octets::varint_len(max_len as u64);
-
-                    let max_len = match max_len.checked_sub(overhead) {
-                        Some(v) => v,
-
-                        None => continue,
-                    };
-
-                    let stream_buf = stream.send.pop(max_len)?;
-
-                    if stream_buf.is_empty() && !stream_buf.fin() {
+                    None => {
+                        // The stream doesn't exist anymore, so remove it from
+                        // the almost full set.
+                        self.streams.mark_almost_full(stream_id, false);
                         continue;
                     }
+                };
 
-                    let tail = stream.send.len;
+                let frame = frame::Frame::MaxStreamData {
+                    stream_id,
+                    max: stream.recv.update_max_data() as u64,
+                };
 
-                    self.tx_data += stream_buf.len() as u64;
+                self.streams.mark_almost_full(stream_id, false);
 
-                    let mut temp_m = 0;
-                    let mut temp_n = 0;
-
-                    if self.fec.is_empty() {
-                        let solution_redundancy = Connection::get_redundancy_rate(self.init_redundancy_rate);
-                    
-                        if stream.send.len >= 1{
-                            temp_m = ((stream.send.len - 1) / 1350 + 1) as u8;
-                            if temp_m >= 20 {
-                                temp_m = 20;
-                            }
-                            temp_n = (temp_m as f32 * solution_redundancy) as u8;
-                            
-                            debug!("solution check:{} {}", temp_m, temp_n);
-        
-                            if temp_m == 0 || temp_n == 0 {
-                                temp_m = 0;
-                                temp_n = 0;
-                            }
-        
-                            debug!("fec check:{} {} {} {} {}", stream.send.block_size(), stream.send.len, solution_redundancy, temp_m, temp_n);
-                        }
-                    }
-
-                    if let Some(tail_threshold) = self.tail_size {
-                        if tail <= tail_threshold {
-                            m = temp_m;
-                            n = temp_n;
-                        }
-                    }
-
-                    debug!(
-                        "payload send {} bytes of stream {}",
-                        stream_buf.len(),
-                        stream_id
-                    );
-
-                    let frame = frame::Frame::Stream {
-                        stream_id,
-                        data: stream_buf,
-                    };
-
-                    payload_len += frame.wire_len();
-                    left -= frame.wire_len();
-
-                    frames.push(frame);
-
-                    ack_eliciting = true;
-                    in_flight = true;
-
-                    // If the stream is still flushable, push it to the back of
-                    // the queue again.
-                    if stream.is_flushable() {
-                        self.streams.push_flushable(stream_id);
-                    }
-
+                if frame.wire_len() > left {
                     break;
                 }
-            }
-
-            // Create PING for PTO probe.
-            if self.recovery.loss_probes[epoch] > 0 &&
-                !ack_eliciting &&
-                left >= 1 &&
-                !is_closing
-            {
-                let frame = frame::Frame::Ping;
 
                 payload_len += frame.wire_len();
                 left -= frame.wire_len();
@@ -2369,17 +2598,303 @@ impl Connection {
                 ack_eliciting = true;
                 in_flight = true;
             }
+        }
+        let test_type_short = time::Instant::now();
+        // info!(
+        //     "test_type_short: {}",
+        //     (test_type_short - test_teset_frame).as_micros() as u64
+        // );
+
+        // Create CONNECTION_CLOSE frame.
+        if let Some(err) = self.error {
+            let frame = frame::Frame::ConnectionClose {
+                error_code: err,
+                frame_type: 0,
+                reason: Vec::new(),
+            };
+
+            payload_len += frame.wire_len();
+            left -= frame.wire_len();
+
+            frames.push(frame);
+
+            // ---ZUO begin
+            // Get the larger of pto of two paths
+            let recovery_pto = match self
+                .paths[0]
+                .recovery
+                .pto()
+                .checked_sub(self.paths[1].recovery.pto())
+            {
+                Some(v) => v,
+                None => self.paths[1].recovery.pto(),
+            };
+
+            // self.draining_timer = Some(now + (self.recovery.pto() * 3));
+            self.draining_timer = Some(now + (recovery_pto * 3));
+            // ---ZUO end
+
+            ack_eliciting = true;
+            in_flight = true;
+        }
+
+        // Create APPLICATION_CLOSE frame.
+        if let Some(err) = self.app_error {
+            if pkt_type == packet::Type::Short {
+                let frame = frame::Frame::ApplicationClose {
+                    error_code: err,
+                    reason: self.app_reason.clone(),
+                };
+
+                payload_len += frame.wire_len();
+                left -= frame.wire_len();
+
+                frames.push(frame);
+
+                // ---ZUO begin
+                let recovery_pto = match self
+                    .paths[0]
+                    .recovery
+                    .pto()
+                    .checked_sub(self.paths[1].recovery.pto())
+                {
+                    Some(v) => v,
+                    None => self.paths[1].recovery.pto(),
+                };
+
+                // self.draining_timer = Some(now + (self.recovery.pto() * 3));
+                self.draining_timer = Some(now + (recovery_pto * 3));
+                // ---ZUO end
+
+                ack_eliciting = true;
+                in_flight = true;
+            }
+        }
+        // let test_close_frame = time::Instant::now();
+        // info!(
+        //     "test_close_frame: {}",
+        //     (test_close_frame - test_type_short).as_micros() as u64
+        // );
+
+        // Create PATH_RESPONSE frame.
+        if let Some(ref challenge) = self.challenge {
+            let frame = frame::Frame::PathResponse {
+                data: challenge.clone(),
+            };
+
+            if left > frame.wire_len() {
+                payload_len += frame.wire_len();
+                left -= frame.wire_len();
+
+                frames.push(frame);
+
+                self.challenge = None;
+
+                ack_eliciting = true;
+                in_flight = true;
+            }
+        }
+
+        // Create CRYPTO frame.
+        // let test_crypto_frame = time::Instant::now();
+        // info!(
+        //     "test_path_response_frame: {}",
+        //     (test_crypto_frame - test_close_frame).as_micros() as u64
+        // );
+        if self.pkt_num_spaces[epoch].crypto_stream.is_flushable()
+            && left > frame::MAX_CRYPTO_OVERHEAD
+            && !is_closing
+        {
+            info!("create crypto frame");
+            let crypto_len = left - frame::MAX_CRYPTO_OVERHEAD;
+            let crypto_buf = self.pkt_num_spaces[epoch]
+                .crypto_stream
+                .send
+                .pop(crypto_len)?;
+
+            let frame = frame::Frame::Crypto { data: crypto_buf };
+
+            payload_len += frame.wire_len();
+            left -= frame.wire_len();
+
+            frames.push(frame);
+
+            ack_eliciting = true;
+            in_flight = true;
+        }
+
+        // Create a single STREAM frame for the first stream that is flushable.
+        let test_single_frame = time::Instant::now();
+        // info!(
+        //     "test_crypto_frame: {}",
+        //     (test_single_frame - test_crypto_frame).as_micros() as u64
+        // );
+        if pkt_type == packet::Type::Short
+            && self.max_tx_data > self.tx_data
+            && left > frame::MAX_STREAM_OVERHEAD
+            && !is_closing
+        {
+            // let stats = self.stats();
+            // let rtt = stats.rtt.as_millis() as f64;
+            // let bandwidth = stats.cwnd as f64 / rtt; // kb/s or bytes/ms
+            // while let Some(stream_id) =
+            //     self.streams.peek_flushable(bandwidth, rtt)?
+            // let bandwidth_f = self.get_bandwidth(0);
+            // let bandwidth_s = self.get_bandwidth(1);
+            // while let Some(stream_id) = self.streams.peek_flushable(
+            //     bandwidth_f,
+            //     bandwidth_s,
+            //     self.paths[0].recovery.rtt().as_millis() as f64,
+            // )?
+            while let Some(stream_id) =
+                self.get_stream_to_send(schedule_path_id, lost_block)
+            {
+                let stream = match self.streams.get_mut(stream_id) {
+                    Some(v) => v,
+
+                    None => continue,
+                };
+                info!("stream {} is choosen", stream_id);
+
+                if stream.send.is_new() {
+                    // Create BlockInfo frame
+                    let (block_priority, block_deadline) =
+                        stream.send.get_block_info();
+                    let frame = frame::Frame::BlockInfo {
+                        stream_id,
+                        block_size: stream.send.block_size() as u64,
+                        block_priority,
+                        block_deadline,
+                        start_time: stream.send.start_time() as u64,
+                    };
+                    if frame.wire_len() <= left {
+                        payload_len += frame.wire_len();
+                        left -= frame.wire_len();
+                        frames.push(frame);
+                        ack_eliciting = true;
+                        in_flight = true;
+                        stream.send.un_new()
+                    }
+                }
+                if !(left > frame::MAX_STREAM_OVERHEAD) {
+                    if stream.is_flushable() {
+                        let pq = stream.send.priority;
+                        info!("pq3 {}", pq);
+                        self.streams.push_flushable(stream_id, pq);
+                    }
+                    break;
+                }
+                // Make sure we can fit the data in the packet.
+                let max_len =
+                    cmp::min(left, (self.max_tx_data - self.tx_data) as usize);
+
+                let off = stream.send.off();
+
+                // Try to accurately account for the STREAM frame's overhead,
+                // such that we can fill as much of the packet buffer as
+                // possible.
+                let overhead = 1
+                    + octets::varint_len(stream_id)
+                    + octets::varint_len(off)
+                    + octets::varint_len(max_len as u64);
+
+                let max_len = match max_len.checked_sub(overhead) {
+                    Some(v) => v,
+
+                    None => continue,
+                };
+
+                let send_data_struct =
+                    match self.send_info[schedule_path_id as usize].get_mut(0) {
+                        Some(x) => x,
+                        None => break,
+                    };
+
+                info!("unsend_size {}", send_data_struct.unsend_size);
+                info!("max len {}", max_len);
+                let max_len_left =
+                    cmp::min(max_len, send_data_struct.unsend_size as usize);
+                info!("max len left {}", max_len_left);
+
+                let stream_buf = stream.send.pop(max_len_left)?;
+
+                info!("stream_buf len {}", stream_buf.len());
+
+                if stream_buf.is_empty() && !stream_buf.fin() {
+                    continue;
+                }
+
+                self.tx_data += stream_buf.len() as u64;
+
+                match self.send_info[schedule_path_id as usize].get_mut(0) {
+                    Some(x) => {
+                        x.unsend_size = x.unsend_size - stream_buf.len() as u64;
+                    }
+                    None => break,
+                };
+
+                let frame = frame::Frame::Stream {
+                    stream_id,
+                    data: stream_buf,
+                };
+
+                payload_len += frame.wire_len();
+                left -= frame.wire_len();
+
+                frames.push(frame);
+
+                ack_eliciting = true;
+                in_flight = true;
+
+                // If the stream is still flushable, push it to the back of the
+                // queue again.
+                if stream.is_flushable() {
+                    let pq = stream.send.priority;
+                    info!("pq4 {}", pq);
+                    self.streams.push_flushable(stream_id, pq);
+                }
+
+                break;
+            }
+        }
+        let test_single_frame_end = time::Instant::now();
+        info!(
+            "test_single_frame: {}",
+            (test_single_frame_end - test_single_frame).as_micros() as u64
+        );
+
+        // Create PING for PTO probe.
+        if self.paths[schedule_path_id].recovery.loss_probes[epoch] > 0
+            && !ack_eliciting
+            && left >= 1
+            && !is_closing
+        {
+            let frame = frame::Frame::Ping;
+
+            payload_len += frame.wire_len();
+            left -= frame.wire_len();
+
+            frames.push(frame);
+
+            ack_eliciting = true;
+            in_flight = true;
         }
 
         if ack_eliciting {
-            self.recovery.loss_probes[epoch] =
-                self.recovery.loss_probes[epoch].saturating_sub(1);
+            self.paths[schedule_path_id].recovery.loss_probes[epoch] =
+                self.paths[schedule_path_id].recovery.loss_probes[epoch]
+                    .saturating_sub(1);
         }
 
         if frames.is_empty() {
-            trace!("frames is empty"); // may be caused by insufficient space in available cwnd
+            trace!("frames is empty");
             return Err(Error::Done);
         }
+        // let test_ping = time::Instant::now();
+        // info!(
+        //     "test_ping: {}",
+        //     (test_ping - test_single_frame_end).as_micros() as u64
+        // );
 
         // Pad the client's initial packet.
         if !self.is_server && pkt_type == packet::Type::Initial {
@@ -2397,19 +2912,9 @@ impl Connection {
         }
 
         // Pad payload so that it's always at least 4 bytes.
-        // TODO Pad payload to the same size when this is the last stream buffer.
-        // we can directly modify the payload min len
-        let payload_min_len = if pkt_type == packet::Type::Short &&
-            ((m != 0 && n != 0) || !self.fec.is_empty())
-        {
-            1305
-        } else {
-            PAYLOAD_MIN_LEN
-        };
-        // debug!("payload len is {}, min length should be {}", payload_len, payload_min_len);
-        if payload_len < payload_min_len {
+        if payload_len < PAYLOAD_MIN_LEN {
             let frame = frame::Frame::Padding {
-                len: payload_min_len - payload_len,
+                len: PAYLOAD_MIN_LEN - payload_len,
             };
 
             payload_len += frame.wire_len();
@@ -2431,58 +2936,29 @@ impl Connection {
 
         let payload_offset = b.off();
 
-        trace!(
-            "{} tx pkt {:?} len={} pn={}",
-            self.trace_id,
-            hdr,
-            payload_len,
-            pn
-        );
+        // trace!(
+        //     "{} tx pkt {:?} len={} pn={}",
+        //     self.trace_id,
+        //     hdr,
+        //     payload_len,
+        //     pn
+        // );
 
         // Encode frames into the output packet.
+        let test_encode_frame = time::Instant::now();
+        // info!(
+        //     "test_three_if: {}",
+        //     (test_encode_frame - test_ping).as_micros() as u64
+        // );
+        let mut frame_count = 0;
         for frame in &frames {
-            debug!("{} tx frm {:?}", self.trace_id, frame);
+            // trace!("{} tx frm {:?}", self.trace_id, frame);
 
             frame.to_bytes(&mut b)?;
-        }
 
-        // FEC encoding
-        if m != 0 && n != 0 || !self.fec.is_empty() {
-            let fec_group = match self.fec.entry(0) {
-                hash_map::Entry::Occupied(v) => v.into_mut(),
-                hash_map::Entry::Vacant(v) => {
-                    let fec_info = fec::FecStatus {
-                        m,
-                        n,
-                        group_id: self.next_fec_group_id,
-                        index: 0,
-                    };
-                    self.next_fec_group_id += 1;
-                    v.insert(fec::FecGroup::new(fec_info, payload_len - overhead))
-                },
-            };
-            fec_group.info.index = fec_group.next_index;
-            fec_group.next_index += 1;
-
-            debug!("info: {:?}, data length: {}", fec_group.info, fec_group.shard_size);
-            debug!("payload_len {}, overhead {}, payload_len - overhead {}", payload_len, overhead, payload_len - overhead);
-            let (_, mut payload) = b.split_at(payload_offset)?;
-            hdr.fec_info = fec_group.info;
-            let fec_frame = fec::FecFrame {
-                info: fec_group.info,
-                data: payload.slice(payload_len - overhead)?.to_vec(),
-            };
-            fec_group.feed_fec_frame(&fec_frame);
-            if fec_group.full() {
-                let r = fec_group.encode();
-                for a in r {
-                    self.fec_encoded.push_back(a);
-                }
-                // Remove fec_groups
-                self.fec.remove(&0);
-            }
-            packet::update_fec_info(&mut b, &hdr)?;
+            frame_count = frame_count + 1;
         }
+        info!("frame_to_bytes_count {}", frame_count);
 
         let aead = match self.pkt_num_spaces[epoch].crypto_seal {
             Some(ref v) => v,
@@ -2498,9 +2974,6 @@ impl Connection {
             aead,
         )?;
 
-        let encode_time = now.elapsed();
-        trace!("Encode time is {}", encode_time.as_micros());
-        now = time::Instant::now();
         let sent_pkt = recovery::Sent {
             pkt_num: pn,
             frames,
@@ -2508,12 +2981,9 @@ impl Connection {
             size: if ack_eliciting { written } else { 0 },
             ack_eliciting,
             in_flight,
-            fec_info: hdr.fec_info,
         };
 
-        debug!("tx pkt {:?} len={} pn={}", hdr, payload_len, pn);
-
-        self.recovery.on_packet_sent(
+        self.paths[schedule_path_id].recovery.on_packet_sent(
             sent_pkt,
             epoch,
             self.is_established(),
@@ -2521,12 +2991,34 @@ impl Connection {
             &self.trace_id,
         );
 
+        /*-------------------------------------------------------------------------*/
+        // Record each packet you send
+        // let test_record_packet = time::Instant::now();
+        self.pkt_num_spaces[epoch]
+            .pkts_sent_with_pathid
+            .insert(pn, schedule_path_id);
+
+        // Record each packet seq of its path
+        // let inipth: u8 = 0;
+        info!("*******insert packet {} to subseq path********", pn);
+        self.path_seqs[schedule_path_id] += 1;
+        self.paths[schedule_path_id]
+            .pkts_num_with_seq
+            .insert(pn, self.path_seqs[schedule_path_id]);
+        /*-------------------------------------------------------------------------*/
+
         self.pkt_num_spaces[epoch].next_pkt_num += 1;
 
         self.sent_count += 1;
+        // let test_encode_frame_end = time::Instant::now();
+        // info!(
+        //     "test_encode_frame: {}",
+        //     (test_encode_frame_end - test_encode_frame).as_micros() as u64
+        // );
 
         // On the client, drop initial state after sending an Handshake packet.
         if !self.is_server && hdr.ty == packet::Type::Handshake {
+            info!("drop2");
             self.drop_epoch_state(packet::EPOCH_INITIAL);
         }
 
@@ -2543,8 +3035,51 @@ impl Connection {
         if ack_eliciting {
             self.ack_eliciting_sent = true;
         }
-
+        // let test_final = time::Instant::now();
+        // info!(
+        //     "test_final: {}",
+        //     (test_final - test_encode_frame_end).as_micros() as u64
+        // );
+        // let test10 = time::Instant::now();
+        // info!("test10: {}", (test10 - test9).as_micros() as u64);
         Ok(written)
+    }
+
+    fn get_bandwidth(&self, path: usize) -> f64 {
+        let cwnd: f64;
+        let rtt: f64;
+        let bytes_in_flight: f64;
+
+        // Below may not a correctly(nicely) estimate Bandwidth
+        cwnd = self.paths[path].recovery.cc.cwnd() as f64;
+        rtt = self.paths[path].recovery.rtt().as_millis() as f64;
+        bytes_in_flight =
+            self.paths[path].recovery.cc.bytes_in_flight() as f64;
+
+        let bandwidth = cwnd / rtt / 1000.0; // kB/s or bytes/ms -> MB/s
+                                             // let bandwidth = 3.0;
+        info!(
+            "path: {}, cwnd: {}, rtt: {}, bandwidth: {} MB/s",
+            path, cwnd, rtt, bandwidth
+        );
+        info!("path: {}, bytes_in_flight: {}", path, bytes_in_flight);
+
+        bandwidth
+    }
+
+    /// MP: Get Path One Way Delay Update
+    pub fn get_one_way_delay_update(&mut self, owd: f64, path: u8) {
+        self.one_way_delay_pm.update_owd(owd, path);
+    }
+
+    /// Get pacing rate of path.
+    pub fn get_pacing_rate(&self, path: usize) -> f64 {
+        let cwnd: f64;
+        let rtt: f64;
+        cwnd = self.paths[path].recovery.cc.cwnd() as f64; // bytes
+        rtt = self.paths[path].recovery.rtt().as_millis() as f64; //ms
+        cwnd * 8.0 * 1024.0 / rtt // bits/s
+                                  // 3000.0 * 8.0 * 1024.0
     }
 
     /// Reads contiguous data from a stream into the provided slice.
@@ -2575,8 +3110,8 @@ impl Connection {
         &mut self, stream_id: u64, out: &mut [u8],
     ) -> Result<(usize, bool)> {
         // We can't read on our own unidirectional streams.
-        if !stream::is_bidi(stream_id) &&
-            stream::is_local(stream_id, self.is_server)
+        if !stream::is_bidi(stream_id)
+            && stream::is_local(stream_id, self.is_server)
         {
             return Err(Error::InvalidStreamState);
         }
@@ -2615,22 +3150,16 @@ impl Connection {
         Ok((read, fin))
     }
 
-    /// <kbd>DTP</kbd>
-    ///
     /// Returns the block info.
     pub fn get_block_info(&self, stream_id: u64) -> (u64, u64, u64) {
         self.streams.get(stream_id).unwrap().recv.get_block_info()
     }
 
-    /// <kbd>DTP</kbd>
-    ///
     /// Returns the receiver end block completion time.
     pub fn get_bct(&self, stream_id: u64) -> i64 {
         self.streams.get(stream_id).unwrap().recv.get_bct()
     }
 
-    /// <kbd>DTP</kbd>
-    ///
     /// Returns the received size before deadline in bytes.
     pub fn get_good_recv(&self, stream_id: u64) -> usize {
         self.streams.get(stream_id).unwrap().recv.get_good_recv()
@@ -2669,54 +3198,24 @@ impl Connection {
             fin,
             stream::MAX_DEADLINE,
             stream::DEFAULT_PRIORITY,
-            stream_id, // default: no depend
         )
     }
 
-    /// <kbd>DTP</kbd>
-    ///
-    /// Send a block (specified by stream_id) with deadline and priority
-    ///
-    /// On success the number of bytes written is returned, or [`Done`] if no
-    /// data was written (e.g. because the stream has no capacity).
-    ///
-    /// Note that in order to avoid buffering an infinite amount of data in the
-    /// stream's send buffer, streams are only allowed to buffer outgoing data
-    /// up to the amount that the peer allows it to send (that is, up to the
-    /// stream's outgoing flow control capacity).
-    ///
-    /// [`Done`]: enum.Error.html#variant.Done
-    ///
-    /// ## Examples:
-    ///
-    /// ```no_run
-    /// # let mut buf = [0; 512];
-    /// # let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-    /// # let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION)?;
-    /// # let scid = [0xba; 16];
-    /// # let mut conn = quiche::accept(&scid, None, &mut config)?;
-    /// # let stream_id = 0;
-    /// # let deadline = 200; // ms
-    /// # let priority = 3;
-    /// # let depend_id = stream_id; // default: no dependency
-    /// conn.stream_send_full(stream_id, b"hello", true, deadline, priority, depend_id)?;
-    /// # Ok::<(), quiche::Error>(())
-    /// ```
+    /// Stream_send_full with deadline and priority.
     pub fn stream_send_full(
         &mut self, stream_id: u64, buf: &[u8], fin: bool, deadline: u64,
-        priority: u64, depend_id: u64,
+        priority: u64,
     ) -> Result<usize> {
         // We can't write on the peer's unidirectional streams.
-        if !stream::is_bidi(stream_id) &&
-            !stream::is_local(stream_id, self.is_server)
+        if !stream::is_bidi(stream_id)
+            && !stream::is_local(stream_id, self.is_server)
         {
             return Err(Error::InvalidStreamState);
         }
 
         // Get existing stream or create a new one.
-        let stream = self.get_or_create_stream_full(
-            stream_id, true, deadline, priority, depend_id,
-        )?;
+        let stream =
+            self.get_or_create_stream_full(stream_id, true, deadline, priority)?;
 
         let was_flushable = stream.is_flushable();
 
@@ -2734,7 +3233,8 @@ impl Connection {
         // Consider the stream flushable also when we are sending a zero-length
         // frame that has the fin flag set.
         if (flushable || empty_fin) && !was_flushable {
-            self.streams.push_flushable(stream_id);
+            let pq = stream.send.priority;
+            self.streams.push_flushable(stream_id, pq);
         }
 
         if !writable {
@@ -2742,11 +3242,6 @@ impl Connection {
         }
 
         Ok(sent)
-    }
-
-    /// Returns BBR pacing rate.
-    pub fn get_pacing_rate(&self) -> u64 {
-        self.recovery.cc.pacing_rate()
     }
 
     /// Shuts down reading or writing from/to the specified stream.
@@ -2779,7 +3274,7 @@ impl Connection {
 
                 // Once shutdown, the stream is guaranteed to be non-readable.
                 self.streams.mark_readable(stream_id, false);
-            },
+            }
 
             // TODO: send RESET_STREAM
             Shutdown::Write => {
@@ -2787,7 +3282,7 @@ impl Connection {
 
                 // Once shutdown, the stream is guaranteed to be non-writable.
                 self.streams.mark_writable(stream_id, false);
-            },
+            }
         }
 
         Ok(())
@@ -2800,17 +3295,6 @@ impl Connection {
         };
 
         Err(Error::InvalidStreamState)
-    }
-
-    /// Returns true if all the data has been recieved from the specified
-    /// stream.
-    pub fn stream_received(&self, stream_id: u64) -> bool {
-        let stream = match self.streams.get(stream_id) {
-            Some(v) => v,
-
-            None => return true,
-        };
-        stream.recv.all_received()
     }
 
     /// Returns true if all the data has been read from the specified stream.
@@ -2952,6 +3436,7 @@ impl Connection {
     ///
     /// [`on_timeout()`]: struct.Connection.html#method.on_timeout
     pub fn timeout(&self) -> Option<time::Duration> {
+        info!("************timeout*************");
         if self.closed {
             return None;
         }
@@ -2960,13 +3445,48 @@ impl Connection {
             // Draining timer takes precedence over all other timers. If it is
             // set it means the connection is closing so there's no point in
             // processing the other timers.
+            info!("drainging timer {:?}", self.draining_timer);
             self.draining_timer
         } else {
             // Use the lowest timer value (i.e. "sooner") among idle and loss
             // detection timers. If they are both unset (i.e. `None`) then the
             // result is `None`, but if at least one of them is set then a
             // `Some(...)` value is returned.
-            let timers = [self.idle_timer, self.recovery.loss_detection_timer()];
+            let loss_detection_timer_temp = if self
+                .paths[0]
+                .recovery
+                .loss_detection_timer()
+                .is_some()
+                && !self.paths[1].recovery.loss_detection_timer().is_some()
+            {
+                info!("init path timer");
+                self.paths[0].recovery.loss_detection_timer()
+            } else if !self.paths[0].recovery.loss_detection_timer().is_some()
+                && self.paths[1].recovery.loss_detection_timer().is_some()
+            {
+                info!("subseq path timer");
+                self.paths[1].recovery.loss_detection_timer()
+            } else if self.paths[0].recovery.loss_detection_timer().is_some()
+                && self.paths[1].recovery.loss_detection_timer().is_some()
+            {
+                info!(
+                    "first loss detection timer: {:?}",
+                    self.paths[0].recovery.loss_detection_timer()
+                );
+                info!(
+                    "second loss detection timer: {:?}",
+                    self.paths[1].recovery.loss_detection_timer()
+                );
+                info!("min");
+                cmp::min(
+                    self.paths[0].recovery.loss_detection_timer(),
+                    self.paths[1].recovery.loss_detection_timer(),
+                )
+            } else {
+                None
+            };
+            info!("loss detection timer {:?}", loss_detection_timer_temp);
+            let timers = [self.idle_timer, loss_detection_timer_temp];
 
             timers.iter().filter_map(|&x| x).min()
         };
@@ -2978,6 +3498,7 @@ impl Connection {
                 return Some(time::Duration::new(0, 0));
             }
 
+            info!("timeout t : {:?}", timeout.duration_since(now));
             return Some(timeout.duration_since(now));
         }
 
@@ -2988,6 +3509,7 @@ impl Connection {
     ///
     /// If no timeout has occurred it does nothing.
     pub fn on_timeout(&mut self) {
+        info!("******on_timeout*****");
         let now = time::Instant::now();
 
         if let Some(draining_timer) = self.draining_timer {
@@ -3000,6 +3522,7 @@ impl Connection {
             // Draining timer takes precedence over all other timers. If it is
             // set it means the connection is closing so there's no point in
             // processing the other timers.
+            info!("draining timer return");
             return;
         }
 
@@ -3012,17 +3535,30 @@ impl Connection {
             }
         }
 
-        if let Some(timer) = self.recovery.loss_detection_timer() {
+        if let Some(timer) = self.paths[0].recovery.loss_detection_timer() {
+            info!("1. timer <= now {}", timer <= now);
             if timer <= now {
-                trace!("{} loss detection timeout expired", self.trace_id);
+                trace!("{} loss detection timeout expired1", self.trace_id);
 
-                self.recovery.on_loss_detection_timeout(
+                self.paths[0].recovery.on_loss_detection_timeout(
                     self.is_established(),
                     now,
                     &self.trace_id,
+                    self.paths[0].pkts_num_with_seq.clone(),
                 );
+            }
+        }
+        if let Some(timer) = self.paths[1].recovery.loss_detection_timer() {
+            info!("2. timer <= now {}", timer <= now);
+            if timer <= now {
+                trace!("{} loss detection timeout expired2", self.trace_id);
 
-                return;
+                self.paths[1].recovery.on_loss_detection_timeout(
+                    self.is_established(),
+                    now,
+                    &self.trace_id,
+                    self.paths[1].pkts_num_with_seq.clone(),
+                );
             }
         }
     }
@@ -3044,6 +3580,7 @@ impl Connection {
     /// [`timeout()`]: struct.Connection.html#method.timeout
     /// [`is_closed()`]: struct.Connection.html#method.is_closed
     pub fn close(&mut self, app: bool, err: u64, reason: &[u8]) -> Result<()> {
+        let test_close = time::Instant::now();
         if self.draining_timer.is_some() {
             return Err(Error::Done);
         }
@@ -3058,7 +3595,11 @@ impl Connection {
         } else {
             self.error = Some(err);
         }
-
+        let test_close_end = time::Instant::now();
+        info!(
+            "test_close_end: {}",
+            (test_close_end - test_close).as_micros() as u64
+        );
         Ok(())
     }
 
@@ -3087,6 +3628,16 @@ impl Connection {
         self.handshake.is_completed()
     }
 
+    /// Returns true if the second path is complete.
+    pub fn is_second_path_completed(&self) -> bool {
+        self.second_path_completed
+    }
+
+    /// Set true if the second path is complete.
+    pub fn set_second_path_completed(&mut self) {
+        self.second_path_completed = true;
+    }
+
     /// Returns true if the connection is resumed.
     pub fn is_resumed(&self) -> bool {
         self.handshake.is_resumed()
@@ -3110,9 +3661,13 @@ impl Connection {
         Stats {
             recv: self.recv_count,
             sent: self.sent_count,
-            lost: self.recovery.lost_count,
-            cwnd: self.recovery.cc.cwnd(),
-            rtt: self.recovery.rtt()
+            // lost: self.recovery.lost_count,
+            // cwnd: self.recovery.cc.cwnd(),
+            // rtt: self.recovery.rtt(),
+            lost_init: self.paths[0].recovery.lost_count,
+            lost_subseq: self.paths[1].recovery.lost_count,
+            rtt_init: self.paths[0].recovery.rtt(),
+            rtt_subseq: self.paths[1].recovery.rtt(),
         }
     }
 
@@ -3179,7 +3734,7 @@ impl Connection {
     }
 
     /// Selects the packet number space for outgoing packets.
-    fn write_epoch(&self) -> Result<packet::Epoch> {
+    fn write_epoch(&self, schedule_path_id: usize) -> Result<packet::Epoch> {
         // On error send packet in the latest epoch available, but only send
         // 1-RTT ones when the handshake is completed.
         if self.error.is_some() {
@@ -3206,28 +3761,35 @@ impl Connection {
             }
 
             // We are ready to send data for this packet number space.
-            if self.pkt_num_spaces[epoch].ready() {
+            if self.pkt_num_spaces[epoch].ready(schedule_path_id) {
                 return Ok(epoch);
             }
 
             // There are lost frames in this packet number space.
-            if !self.recovery.lost[epoch].is_empty() {
+            // if !self.recovery.lost[epoch].is_empty() {
+            //     return Ok(epoch);
+            // }
+            if !self.paths[schedule_path_id].recovery.lost[epoch].is_empty() {
                 return Ok(epoch);
             }
 
             // We need to send PTO probe packets.
-            if self.recovery.loss_probes[epoch] > 0 {
+            // if self.recovery.loss_probes[epoch] > 0 {
+            //     return Ok(epoch);
+            // }
+            if self.paths[schedule_path_id].recovery.loss_probes[epoch] > 0 {
+                info!("pto probe pkts second path");
                 return Ok(epoch);
             }
         }
 
         // If there are flushable streams, use Application.
-        if self.is_established() &&
-            (self.should_update_max_data() ||
-                self.streams.should_update_max_streams_bidi() ||
-                self.streams.should_update_max_streams_uni() ||
-                self.streams.has_flushable() ||
-                self.streams.has_almost_full())
+        if self.is_established()
+            && (self.should_update_max_data()
+                || self.streams.should_update_max_streams_bidi()
+                || self.streams.should_update_max_streams_uni()
+                || self.streams.has_flushable()
+                || self.streams.has_almost_full())
         {
             return Ok(packet::EPOCH_APPLICATION);
         }
@@ -3245,14 +3807,12 @@ impl Connection {
             local,
             stream::MAX_DEADLINE,
             stream::DEFAULT_PRIORITY,
-            id,
         )
     }
 
     /// Create stream with deadline and priority.
     fn get_or_create_stream_full(
         &mut self, id: u64, local: bool, deadline: u64, priority: u64,
-        depend_id: u64,
     ) -> Result<&mut stream::Stream> {
         self.streams.get_or_create(
             id,
@@ -3262,15 +3822,16 @@ impl Connection {
             self.is_server,
             deadline,
             priority,
-            depend_id,
         )
     }
 
     /// Processes an incoming frame.
     fn process_frame(
         &mut self, frame: frame::Frame, epoch: packet::Epoch, now: time::Instant,
+        path: usize,
     ) -> Result<()> {
-        debug!("{} rx frm {:?}", self.trace_id, frame);
+        // trace!("{} rx frm {:?}", self.trace_id, frame);
+        // let process_frame_begin_time = time::Instant::now();
 
         match frame {
             frame::Frame::Padding { .. } => (),
@@ -3282,13 +3843,20 @@ impl Connection {
                 ranges,
                 ack_delay,
             } => {
+                // info!("receive and process ack frame");
+                let process_ack_frame_begin_time = time::Instant::now();
                 let scale = 2_u64
                     .pow(self.peer_transport_params.ack_delay_exponent as u32);
                 let ack_delay =
                     ack_delay.checked_mul(scale).ok_or(Error::InvalidFrame)?;
                 let packet_time =
                     packet_time.checked_mul(scale).ok_or(Error::InvalidFrame)?;
-                trace!("packet_time={},ack_delay={}", packet_time, ack_delay);
+                trace!(
+                    "packet_time={},ack_delay={} path {}",
+                    packet_time,
+                    ack_delay,
+                    path
+                );
                 self.recovery.on_ack_received(
                     &ranges,
                     ack_delay,
@@ -3296,6 +3864,9 @@ impl Connection {
                     self.is_established(),
                     now,
                     &self.trace_id,
+                    &mut self.pkt_num_spaces[epoch],
+                    &mut self.paths,
+                    path,
                 )?;
 
                 // When we receive an ACK for a 1-RTT packet after handshake
@@ -3305,9 +3876,16 @@ impl Connection {
 
                     // Once the handshake is confirmed, we can drop Handshake
                     // keys.
+                    info!("drop3");
                     self.drop_epoch_state(packet::EPOCH_HANDSHAKE);
                 }
-            },
+                let process_ack_frame_end_time = time::Instant::now();
+                info!(
+                    "process_frame: process ack frame:{}",
+                    (process_ack_frame_end_time - process_ack_frame_begin_time)
+                        .as_micros() as u64
+                );
+            }
 
             frame::Frame::BlockInfo {
                 stream_id,
@@ -3317,8 +3895,8 @@ impl Connection {
                 start_time,
             } => {
                 // Peer can't send on our unidirectional streams.
-                if !stream::is_bidi(stream_id) &&
-                    stream::is_local(stream_id, self.is_server)
+                if !stream::is_bidi(stream_id)
+                    && stream::is_local(stream_id, self.is_server)
                 {
                     return Err(Error::InvalidStreamState);
                 }
@@ -3332,7 +3910,7 @@ impl Connection {
                     block_deadline,
                     start_time as u128,
                 );
-            },
+            }
 
             frame::Frame::ResetStream {
                 stream_id,
@@ -3340,8 +3918,8 @@ impl Connection {
                 error_code,
             } => {
                 // Peer can't send on our unidirectional streams.
-                if !stream::is_bidi(stream_id) &&
-                    stream::is_local(stream_id, self.is_server)
+                if !stream::is_bidi(stream_id)
+                    && stream::is_local(stream_id, self.is_server)
                 {
                     return Err(Error::InvalidStreamState);
                 }
@@ -3368,8 +3946,8 @@ impl Connection {
                 match error_code {
                     1 => {
                         stream.recv.shutdown()?;
-                        debug!("block {} canceled", stream_id);
-                    },
+                        info!("block {} canceled", stream_id);
+                    }
                     _ => (),
                 }
 
@@ -3378,16 +3956,24 @@ impl Connection {
                 if self.rx_data > self.max_rx_data {
                     return Err(Error::FlowControl);
                 }
-            },
+
+                match error_code {
+                    1 => {
+                        self.streams.mark_readable(stream_id, false);
+                        info!("block {} mark unreadable", stream_id);
+                    }
+                    _ => (),
+                }
+            }
 
             frame::Frame::StopSending { stream_id, .. } => {
                 // STOP_SENDING on a receive-only stream is a fatal error.
-                if !stream::is_local(stream_id, self.is_server) &&
-                    !stream::is_bidi(stream_id)
+                if !stream::is_local(stream_id, self.is_server)
+                    && !stream::is_bidi(stream_id)
                 {
                     return Err(Error::InvalidStreamState);
                 }
-            },
+            }
 
             frame::Frame::Crypto { data } => {
                 // Push the data to the stream so it can be re-ordered.
@@ -3407,15 +3993,16 @@ impl Connection {
                 }
 
                 self.do_handshake()?;
-            },
+            }
 
             // TODO: implement stateless retry
             frame::Frame::NewToken { .. } => (),
 
             frame::Frame::Stream { stream_id, data } => {
                 // Peer can't send on our unidirectional streams.
-                if !stream::is_bidi(stream_id) &&
-                    stream::is_local(stream_id, self.is_server)
+                let process_stream_frame_begin_time = time::Instant::now();
+                if !stream::is_bidi(stream_id)
+                    && stream::is_local(stream_id, self.is_server)
                 {
                     return Err(Error::InvalidStreamState);
                 }
@@ -3445,18 +4032,26 @@ impl Connection {
                     Err(e) => return Err(e),
                 };
 
-                stream.recv.push_evaluation(data, Some(stream_id))?;
+                stream.recv.push(data)?;
+                info!("stream in process frame: {}", stream_id);
 
                 if stream.is_readable() {
                     self.streams.mark_readable(stream_id, true);
                 }
 
                 self.rx_data += data_len;
-            },
+                let process_stream_frame_end_time = time::Instant::now();
+                info!(
+                    "process_frame: process stream frame:{}", //18us
+                    (process_stream_frame_end_time
+                        - process_stream_frame_begin_time)
+                        .as_micros() as u64
+                );
+            }
 
             frame::Frame::MaxData { max } => {
                 self.max_tx_data = cmp::max(self.max_tx_data, max);
-            },
+            }
 
             frame::Frame::MaxStreamData { stream_id, max } => {
                 // Get existing stream or create a new one, but if the stream
@@ -3486,13 +4081,15 @@ impl Connection {
                 // If the stream is now flushable push it to the flushable queue,
                 // but only if it wasn't already queued.
                 if stream.is_flushable() && !was_flushable {
-                    self.streams.push_flushable(stream_id);
+                    info!("In process frame");
+                    let pq = stream.send.priority;
+                    self.streams.push_flushable(stream_id, pq);
                 }
 
                 if writable {
                     self.streams.mark_writable(stream_id, true);
                 }
-            },
+            }
 
             frame::Frame::MaxStreamsBidi { max } => {
                 if max > 2u64.pow(60) {
@@ -3500,7 +4097,7 @@ impl Connection {
                 }
 
                 self.streams.update_peer_max_streams_bidi(max);
-            },
+            }
 
             frame::Frame::MaxStreamsUni { max } => {
                 if max > 2u64.pow(60) {
@@ -3508,7 +4105,7 @@ impl Connection {
                 }
 
                 self.streams.update_peer_max_streams_uni(max);
-            },
+            }
 
             frame::Frame::DataBlocked { .. } => (),
 
@@ -3526,17 +4123,41 @@ impl Connection {
 
             frame::Frame::PathChallenge { data } => {
                 self.challenge = Some(data);
-            },
+            }
 
             frame::Frame::PathResponse { .. } => (),
 
             frame::Frame::ConnectionClose { .. } => {
-                self.draining_timer = Some(now + (self.recovery.pto() * 3));
-            },
+                // ---ZUO begin
+                let recovery_pto = match self
+                    .paths[0]
+                    .recovery
+                    .pto()
+                    .checked_sub(self.paths[1].recovery.pto())
+                {
+                    Some(v) => v,
+                    None => self.paths[1].recovery.pto(),
+                };
+                // self.draining_timer = Some(now + (self.recovery.pto() * 3));
+                self.draining_timer = Some(now + (recovery_pto * 3));
+                // ---ZUO end
+            }
 
             frame::Frame::ApplicationClose { .. } => {
-                self.draining_timer = Some(now + (self.recovery.pto() * 3));
-            },
+                // ---ZUO begin
+                let recovery_pto = match self
+                    .paths[0]
+                    .recovery
+                    .pto()
+                    .checked_sub(self.paths[1].recovery.pto())
+                {
+                    Some(v) => v,
+                    None => self.paths[1].recovery.pto(),
+                };
+                // self.draining_timer = Some(now + (self.recovery.pto() * 3));
+                self.draining_timer = Some(now + (recovery_pto * 3));
+                // ---ZUO end
+            }
 
             frame::Frame::HandshakeDone => {
                 if self.version < PROTOCOL_VERSION_DRAFT25 {
@@ -3550,12 +4171,17 @@ impl Connection {
                 self.handshake_confirmed = true;
 
                 // Once the handshake is confirmed, we can drop Handshake keys.
+                info!("drop4");
                 self.drop_epoch_state(packet::EPOCH_HANDSHAKE);
-            },
-
-            // can not be fec frame, processed outside of the function.
-            frame::Frame::Fec { .. } => (),
+            }
         }
+
+        let process_frame_end_time = time::Instant::now();
+        // info!(
+        //     "process frame time:{}",
+        //     (process_frame_end_time - process_frame_begin_time).as_micros()
+        //         as u64
+        // );
 
         Ok(())
     }
@@ -3569,7 +4195,12 @@ impl Connection {
         self.pkt_num_spaces[epoch].crypto_open = None;
         self.pkt_num_spaces[epoch].crypto_seal = None;
         self.pkt_num_spaces[epoch].clear();
-        self.recovery.drop_unacked_data(epoch);
+        // ----ZUO begin
+        // self.recovery.drop_unacked_data(epoch);
+        info!("drop unacked data");
+        self.paths[0].recovery.drop_unacked_data(epoch);
+        self.paths[1].recovery.drop_unacked_data(epoch);
+        // ----ZUO end
 
         trace!("{} dropped epoch {} state", self.trace_id, epoch);
     }
@@ -3579,8 +4210,8 @@ impl Connection {
     /// This happens when the new max data limit is at least double the amount
     /// of data that can be received before blocking.
     fn should_update_max_data(&self) -> bool {
-        self.max_rx_data_next != self.max_rx_data &&
-            self.max_rx_data_next / 2 > self.max_rx_data - self.rx_data
+        self.max_rx_data_next != self.max_rx_data
+            && self.max_rx_data_next / 2 > self.max_rx_data - self.rx_data
     }
 
     /// Returns the idle timeout value.
@@ -3590,8 +4221,8 @@ impl Connection {
         // If the transport parameter is set to 0, then the respective endpoint
         // decided to disable the idle timeout. If both are disabled we should
         // not set any timeout.
-        if self.local_transport_params.max_idle_timeout == 0 &&
-            self.peer_transport_params.max_idle_timeout == 0
+        if self.local_transport_params.max_idle_timeout == 0
+            && self.peer_transport_params.max_idle_timeout == 0
         {
             return None;
         }
@@ -3610,41 +4241,18 @@ impl Connection {
         };
 
         let idle_timeout = time::Duration::from_millis(idle_timeout);
-        let idle_timeout = cmp::max(idle_timeout, 3 * self.recovery.pto());
+        let recovery_pto = match self
+            .paths[0]
+            .recovery
+            .pto()
+            .checked_sub(self.paths[1].recovery.pto())
+        {
+            Some(v) => v,
+            None => self.paths[1].recovery.pto(),
+        };
+        let idle_timeout = cmp::max(idle_timeout, 3 * recovery_pto);
 
         Some(idle_timeout)
-    }
-
-    /// set tail size threshold
-    pub fn set_tail(&mut self, tail_size: u64) {
-        self.tail_size = Some(tail_size * 1303);
-    }
-
-    /// get Data: ACK ratio with/without interface SolutionAckRatio
-    ///
-    /// ACK packets are sent when `pk_num % get_data_ack_ratio == 0`
-    fn get_data_ack_ratio(_ratio: u64) -> u64{
-        let ack_ratio = {
-            if cfg!(feature = "interface") {
-                unsafe { SolutionAckRatio() }
-            } else {
-                _ratio
-            }
-        };
-        
-        return if ack_ratio > 0 {
-            ack_ratio
-        } else {
-            4
-        }
-    }
-
-    fn get_redundancy_rate(_rate: f32) -> f32 {
-        if cfg!(feature = "interface") {
-            unsafe { SolutionRedundancy() }
-        } else {
-            _rate
-        }
     }
 }
 
@@ -3662,22 +4270,30 @@ pub struct Stats {
     pub sent: usize,
 
     /// The number of QUIC packets that were lost.
-    pub lost: usize,
+    // pub lost: usize,
+    /// The number of QUIC packets that were lost on initial path.
+    pub lost_init: usize,
+    /// The number of QUIC packets that were lost on subseqent path.
+    pub lost_subseq: usize,
 
     /// The estimated round-trip time of the connection.
-    pub rtt: time::Duration,
-
-    /// The size in bytes of the connection's congestion window.
-    pub cwnd: usize,
-
+    // pub rtt: time::Duration,
+    /// The estimated round-trip time of initial path.
+    pub rtt_init: time::Duration,
+    /// The estimated round-trip time of subseqent path.
+    pub rtt_subseq: time::Duration,
+    // The size in bytes of the connection's congestion window.
+    // pub cwnd: usize,
 }
 
 impl std::fmt::Debug for Stats {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            "recv={} sent={} lost={} rtt={:?} cwnd={}",
-            self.recv, self.sent, self.lost, self.rtt, self.cwnd
+            // "recv={} sent={} lost={} rtt={:?} cwnd={}",
+            // self.recv, self.sent, self.lost, self.rtt, self.cwnd
+            "recv={} sent={} lost_init_path={} lost_subseq_path={} rtt_init_path={:?} rtt_subseq_path={:?}",
+            self.recv, self.sent, self.lost_init, self.lost_subseq, self.rtt_init, self.rtt_subseq
         )
     }
 }
@@ -3744,11 +4360,11 @@ impl TransportParams {
                     }
 
                     tp.original_connection_id = Some(val.to_vec());
-                },
+                }
 
                 0x0001 => {
                     tp.max_idle_timeout = val.get_varint()?;
-                },
+                }
 
                 0x0002 => {
                     if is_server {
@@ -3756,7 +4372,7 @@ impl TransportParams {
                     }
 
                     tp.stateless_reset_token = Some(val.get_bytes(16)?.to_vec());
-                },
+                }
 
                 0x0003 => {
                     tp.max_packet_size = val.get_varint()?;
@@ -3764,23 +4380,23 @@ impl TransportParams {
                     if tp.max_packet_size < 1200 {
                         return Err(Error::InvalidTransportParam);
                     }
-                },
+                }
 
                 0x0004 => {
                     tp.initial_max_data = val.get_varint()?;
-                },
+                }
 
                 0x0005 => {
                     tp.initial_max_stream_data_bidi_local = val.get_varint()?;
-                },
+                }
 
                 0x0006 => {
                     tp.initial_max_stream_data_bidi_remote = val.get_varint()?;
-                },
+                }
 
                 0x0007 => {
                     tp.initial_max_stream_data_uni = val.get_varint()?;
-                },
+                }
 
                 0x0008 => {
                     let max = val.get_varint()?;
@@ -3790,7 +4406,7 @@ impl TransportParams {
                     }
 
                     tp.initial_max_streams_bidi = max;
-                },
+                }
 
                 0x0009 => {
                     let max = val.get_varint()?;
@@ -3800,7 +4416,7 @@ impl TransportParams {
                     }
 
                     tp.initial_max_streams_uni = max;
-                },
+                }
 
                 0x000a => {
                     let ack_delay_exponent = val.get_varint()?;
@@ -3810,7 +4426,7 @@ impl TransportParams {
                     }
 
                     tp.ack_delay_exponent = ack_delay_exponent;
-                },
+                }
 
                 0x000b => {
                     let max_ack_delay = val.get_varint()?;
@@ -3820,11 +4436,11 @@ impl TransportParams {
                     }
 
                     tp.max_ack_delay = max_ack_delay;
-                },
+                }
 
                 0x000c => {
                     tp.disable_active_migration = true;
-                },
+                }
 
                 0x000d => {
                     if is_server {
@@ -3832,11 +4448,11 @@ impl TransportParams {
                     }
 
                     // TODO: decode preferred_address
-                },
+                }
 
                 0x000e => {
                     tp.active_conn_id_limit = val.get_varint()?;
-                },
+                }
 
                 // Ignore unknown parameters.
                 _ => (),
@@ -4091,7 +4707,7 @@ pub mod testing {
         }
 
         pub fn handshake(&mut self, buf: &mut [u8]) -> Result<()> {
-            let mut len = self.client.send(buf)?;
+            let mut len = self.client.send(buf, 0)?;
 
             while !self.client.is_established() && !self.server.is_established() {
                 len = recv_send(&mut self.server, buf, len)?;
@@ -4103,9 +4719,9 @@ pub mod testing {
             Ok(())
         }
 
-        pub fn flush_client(&mut self, buf: &mut [u8]) -> Result<()> {
+        pub fn flush_client(&mut self, buf: &mut [u8], path: usize) -> Result<()> {
             loop {
-                let len = match self.client.send(buf) {
+                let len = match self.client.send(buf, 0) {
                     Ok(v) => v,
 
                     Err(Error::Done) => break,
@@ -4113,7 +4729,7 @@ pub mod testing {
                     Err(e) => return Err(e),
                 };
 
-                match self.server.recv(&mut buf[..len]) {
+                match self.server.recv(&mut buf[..len], path) {
                     Ok(_) => (),
 
                     Err(Error::Done) => (),
@@ -4125,9 +4741,9 @@ pub mod testing {
             Ok(())
         }
 
-        pub fn flush_server(&mut self, buf: &mut [u8]) -> Result<()> {
+        pub fn flush_server(&mut self, buf: &mut [u8], path: usize) -> Result<()> {
             loop {
-                let len = match self.server.send(buf) {
+                let len = match self.server.send(buf, 0) {
                     Ok(v) => v,
 
                     Err(Error::Done) => break,
@@ -4135,7 +4751,7 @@ pub mod testing {
                     Err(e) => return Err(e),
                 };
 
-                match self.client.recv(&mut buf[..len]) {
+                match self.client.recv(&mut buf[..len], path) {
                     Ok(_) => (),
 
                     Err(Error::Done) => (),
@@ -4179,7 +4795,7 @@ pub mod testing {
         let mut left = len;
 
         while left > 0 {
-            match conn.recv(&mut buf[len - left..len]) {
+            match conn.recv(&mut buf[len - left..len], 0) {
                 Ok(read) => left -= read,
 
                 Err(Error::Done) => break,
@@ -4193,7 +4809,7 @@ pub mod testing {
         let mut off = 0;
 
         while off < buf.len() {
-            match conn.send(&mut buf[off..]) {
+            match conn.send(&mut buf[off..], 0) {
                 Ok(write) => off += write,
 
                 Err(Error::Done) => break,
@@ -4228,13 +4844,12 @@ pub mod testing {
             token: conn.token.clone(),
             versions: None,
             key_phase: false,
-            fec_info: Default::default(),
         };
 
         hdr.to_bytes(&mut b)?;
 
-        let payload_len = frames.iter().fold(0, |acc, x| acc + x.wire_len()) +
-            space.overhead().unwrap();
+        let payload_len = frames.iter().fold(0, |acc, x| acc + x.wire_len())
+            + space.overhead().unwrap();
 
         if pkt_type != packet::Type::Short {
             let len = pn_len + payload_len;
@@ -4268,40 +4883,40 @@ pub mod testing {
         Ok(written)
     }
 
-    pub fn decode_pkt(
-        conn: &mut Connection, buf: &mut [u8], len: usize,
-    ) -> Result<Vec<frame::Frame>> {
-        let mut b = octets::Octets::with_slice(&mut buf[..len]);
+    // pub fn decode_pkt(
+    //     conn: &mut Connection, buf: &mut [u8], len: usize,
+    // ) -> Result<Vec<frame::Frame>> {
+    //     let mut b = octets::Octets::with_slice(&mut buf[..len]);
 
-        let mut hdr = Header::from_bytes(&mut b, conn.scid.len()).unwrap();
+    //     let mut hdr = Header::from_bytes(&mut b, conn.scid.len()).unwrap();
 
-        let epoch = hdr.ty.to_epoch()?;
+    //     let epoch = hdr.ty.to_epoch()?;
 
-        let aead = conn.pkt_num_spaces[epoch].crypto_open.as_ref().unwrap();
+    //     let aead = conn.pkt_num_spaces[epoch].crypto_open.as_ref().unwrap();
 
-        let payload_len = b.cap();
+    //     let payload_len = b.cap();
 
-        packet::decrypt_hdr(&mut b, &mut hdr, &aead).unwrap();
+    //     packet::decrypt_hdr(&mut b, &mut hdr, &aead).unwrap();
 
-        let pn = packet::decode_pkt_num(
-            conn.pkt_num_spaces[epoch].largest_rx_pkt_num,
-            hdr.pkt_num,
-            hdr.pkt_num_len,
-        );
+    //     let pn = packet::decode_pkt_num(
+    //         conn.pkt_num_spaces[epoch].largest_rx_pkt_num,
+    //         hdr.pkt_num,
+    //         hdr.pkt_num_len,
+    //     );
 
-        let mut payload =
-            packet::decrypt_pkt(&mut b, pn, hdr.pkt_num_len, payload_len, aead)
-                .unwrap();
+    //     let mut payload =
+    //         packet::decrypt_pkt(&mut b, pn, hdr.pkt_num_len, payload_len, aead)
+    //             .unwrap();
 
-        let mut frames = Vec::new();
+    //     let mut frames = Vec::new();
 
-        while payload.cap() > 0 {
-            let frame = frame::Frame::from_bytes(&mut payload, hdr.ty)?;
-            frames.push(frame);
-        }
+    //     while payload.cap() > 0 {
+    //         let frame = frame::Frame::from_bytes(&mut payload, hdr.ty)?;
+    //         frames.push(frame);
+    //     }
 
-        Ok(frames)
-    }
+    //     Ok(frames)
+    // }
 }
 
 #[cfg(test)]
@@ -4521,7 +5136,7 @@ mod tests {
         }];
 
         let pkt_type = packet::Type::Short;
-        assert_eq!(pipe.send_pkt_to_server(pkt_type, &frames, &mut buf), Ok(58));
+        assert_eq!(pipe.send_pkt_to_server(pkt_type, &frames, &mut buf), Ok(47));
 
         let mut readable = pipe.server.readable();
         assert_eq!(readable.next(), Some(4));
@@ -4534,7 +5149,7 @@ mod tests {
         }];
 
         let pkt_type = packet::Type::Short;
-        assert_eq!(pipe.send_pkt_to_server(pkt_type, &frames, &mut buf), Ok(58));
+        assert_eq!(pipe.send_pkt_to_server(pkt_type, &frames, &mut buf), Ok(47));
 
         let mut readable = pipe.server.readable();
         assert_eq!(readable.next(), Some(4));
@@ -5115,101 +5730,101 @@ mod tests {
         );
     }
 
-    // #[test]
-    // /// Tests that the order of flushable streams scheduled on the wire is the
-    // /// same as the order of `stream_send()` calls done by the application.
-    // fn stream_round_robin() {
-    //     use std::time::SystemTime;
-    //     let mut buf = [0; 65535];
+    #[test]
+    /// Tests that the order of flushable streams scheduled on the wire is the
+    /// same as the order of `stream_send()` calls done by the application.
+    fn stream_round_robin() {
+        use std::time::SystemTime;
+        let mut buf = [0; 65535];
 
-    //     let mut pipe = testing::Pipe::default().unwrap();
+        let mut pipe = testing::Pipe::default().unwrap();
 
-    //     assert_eq!(pipe.handshake(&mut buf), Ok(()));
+        assert_eq!(pipe.handshake(&mut buf), Ok(()));
 
-    //     assert_eq!(pipe.client.stream_send(8, b"aaaaa", false), Ok(5));
-    //     assert_eq!(pipe.client.stream_send(0, b"aaaaa", false), Ok(5));
-    //     assert_eq!(pipe.client.stream_send(4, b"aaaaa", false), Ok(5));
-    //     let start_time = SystemTime::now()
-    //         .duration_since(SystemTime::UNIX_EPOCH)
-    //         .unwrap()
-    //         .as_millis() as u64;
+        assert_eq!(pipe.client.stream_send(8, b"aaaaa", false), Ok(5));
+        assert_eq!(pipe.client.stream_send(0, b"aaaaa", false), Ok(5));
+        assert_eq!(pipe.client.stream_send(4, b"aaaaa", false), Ok(5));
+        let start_time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
 
-    //     let len = pipe.client.send(&mut buf).unwrap();
+        let len = pipe.client.send(&mut buf).unwrap();
 
-    //     let frames =
-    //         testing::decode_pkt(&mut pipe.server, &mut buf, len).unwrap();
+        let frames =
+            testing::decode_pkt(&mut pipe.server, &mut buf, len).unwrap();
 
-    //     let mut iterator = frames.iter();
+        let mut iterator = frames.iter();
 
-    //     assert_eq!(
-    //         iterator.next(),
-    //         Some(&frame::Frame::BlockInfo {
-    //             stream_id: 8,
-    //             block_size: 5,
-    //             block_deadline: stream::MAX_DEADLINE,
-    //             block_priority: stream::DEFAULT_PRIORITY,
-    //             start_time,
-    //         })
-    //     );
+        assert_eq!(
+            iterator.next(),
+            Some(&frame::Frame::BlockInfo {
+                stream_id: 8,
+                block_size: 5,
+                block_deadline: stream::MAX_DEADLINE,
+                block_priority: stream::DEFAULT_PRIORITY,
+                start_time,
+            })
+        );
 
-    //     assert_eq!(
-    //         iterator.next(),
-    //         Some(&frame::Frame::Stream {
-    //             stream_id: 8,
-    //             data: stream::RangeBuf::from(b"aaaaa", 0, false),
-    //         })
-    //     );
+        assert_eq!(
+            iterator.next(),
+            Some(&frame::Frame::Stream {
+                stream_id: 8,
+                data: stream::RangeBuf::from(b"aaaaa", 0, false),
+            })
+        );
 
-    //     let len = pipe.client.send(&mut buf).unwrap();
+        let len = pipe.client.send(&mut buf).unwrap();
 
-    //     let frames =
-    //         testing::decode_pkt(&mut pipe.server, &mut buf, len).unwrap();
+        let frames =
+            testing::decode_pkt(&mut pipe.server, &mut buf, len).unwrap();
 
-    //     let mut iterator = frames.iter();
-    //     assert_eq!(
-    //         iterator.next(),
-    //         Some(&frame::Frame::BlockInfo {
-    //             stream_id: 0,
-    //             block_size: 5,
-    //             block_deadline: stream::MAX_DEADLINE,
-    //             block_priority: stream::DEFAULT_PRIORITY,
-    //             start_time,
-    //         })
-    //     );
+        let mut iterator = frames.iter();
+        assert_eq!(
+            iterator.next(),
+            Some(&frame::Frame::BlockInfo {
+                stream_id: 0,
+                block_size: 5,
+                block_deadline: stream::MAX_DEADLINE,
+                block_priority: stream::DEFAULT_PRIORITY,
+                start_time,
+            })
+        );
 
-    //     assert_eq!(
-    //         iterator.next(),
-    //         Some(&frame::Frame::Stream {
-    //             stream_id: 0,
-    //             data: stream::RangeBuf::from(b"aaaaa", 0, false),
-    //         })
-    //     );
+        assert_eq!(
+            iterator.next(),
+            Some(&frame::Frame::Stream {
+                stream_id: 0,
+                data: stream::RangeBuf::from(b"aaaaa", 0, false),
+            })
+        );
 
-    //     let len = pipe.client.send(&mut buf).unwrap();
+        let len = pipe.client.send(&mut buf).unwrap();
 
-    //     let frames =
-    //         testing::decode_pkt(&mut pipe.server, &mut buf, len).unwrap();
+        let frames =
+            testing::decode_pkt(&mut pipe.server, &mut buf, len).unwrap();
 
-    //     let mut iterator = frames.iter();
-    //     assert_eq!(
-    //         iterator.next(),
-    //         Some(&frame::Frame::BlockInfo {
-    //             stream_id: 4,
-    //             block_size: 5,
-    //             block_deadline: stream::MAX_DEADLINE,
-    //             block_priority: stream::DEFAULT_PRIORITY,
-    //             start_time,
-    //         })
-    //     );
+        let mut iterator = frames.iter();
+        assert_eq!(
+            iterator.next(),
+            Some(&frame::Frame::BlockInfo {
+                stream_id: 4,
+                block_size: 5,
+                block_deadline: stream::MAX_DEADLINE,
+                block_priority: stream::DEFAULT_PRIORITY,
+                start_time,
+            })
+        );
 
-    //     assert_eq!(
-    //         iterator.next(),
-    //         Some(&frame::Frame::Stream {
-    //             stream_id: 4,
-    //             data: stream::RangeBuf::from(b"aaaaa", 0, false),
-    //         })
-    //     );
-    // }
+        assert_eq!(
+            iterator.next(),
+            Some(&frame::Frame::Stream {
+                stream_id: 4,
+                data: stream::RangeBuf::from(b"aaaaa", 0, false),
+            })
+        );
+    }
 
     #[test]
     /// Tests the readable iterator.
@@ -5661,7 +6276,7 @@ mod tests {
         }];
 
         let pkt_type = packet::Type::Short;
-        assert_eq!(pipe.send_pkt_to_server(pkt_type, &frames, &mut buf), Ok(58));
+        assert_eq!(pipe.send_pkt_to_server(pkt_type, &frames, &mut buf), Ok(47));
     }
 
     #[test]
@@ -5728,12 +6343,9 @@ pub use crate::stream::StreamIter;
 
 mod cc;
 mod crypto;
-mod fec;
 mod ffi;
 mod frame;
 pub mod h3;
-mod ntp;
-mod minmax;
 mod octets;
 mod packet;
 mod rand;
@@ -5741,3 +6353,7 @@ mod ranges;
 mod recovery;
 mod stream;
 mod tls;
+
+// MP: mod path, one_way_delay_pred_meas
+mod one_way_delay_pred_meas;
+mod path;

@@ -251,19 +251,19 @@ impl<'a> Octets<'a> {
                 let buf = self.put_u16(v as u16)?;
                 buf[0] |= 0x40;
                 buf
-            },
+            }
 
             4 => {
                 let buf = self.put_u32(v as u32)?;
                 buf[0] |= 0x80;
                 buf
-            },
+            }
 
             8 => {
                 let buf = self.put_u64(v)?;
                 buf[0] |= 0xc0;
                 buf
-            },
+            }
 
             _ => panic!("value is too large for varint"),
         };

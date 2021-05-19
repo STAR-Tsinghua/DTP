@@ -26,24 +26,22 @@
 
 use std::cmp;
 
-use std::convert::TryInto;
-use std::time;
 use std::time::Duration;
 use std::time::Instant;
 
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 
 use crate::Config;
-use crate::Error;
+// use crate::Error;
 use crate::Result;
 
 use crate::cc;
-use crate::fec;
 use crate::frame;
-use crate::minmax;
 use crate::packet;
 use crate::ranges;
+
+use crate::path;
+use std::collections::HashMap;
 
 // Loss Recovery
 const PACKET_THRESHOLD: u64 = 3;
@@ -52,11 +50,11 @@ const TIME_THRESHOLD: f64 = 9.0 / 8.0;
 
 const GRANULARITY: Duration = Duration::from_millis(1);
 
-const INITIAL_RTT: Duration = Duration::from_millis(500);
+const INITIAL_RTT: Duration = Duration::from_millis(10);
 
 const PERSISTENT_CONGESTION_THRESHOLD: u32 = 3;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Sent {
     pub pkt_num: u64,
 
@@ -69,8 +67,6 @@ pub struct Sent {
     pub ack_eliciting: bool,
 
     pub in_flight: bool,
-
-    pub fec_info: fec::FecStatus,
 }
 
 pub struct Recovery {
@@ -109,15 +105,6 @@ pub struct Recovery {
     pub cc: Box<dyn cc::CongestionControl>,
 
     app_limited: bool,
-
-    /// fec group packet numbers
-    pns_in_fec_group: HashMap<u32, fec::FecPacketNumbers>,
-
-    pub m: u8,
-    pub n: u8,
-    last_adjust_time: Option<Instant>,
-    min_filter: minmax::Minmax<i8>,
-    delta: i8,
 }
 
 impl Recovery {
@@ -155,21 +142,9 @@ impl Recovery {
 
             loss_probes: [0; packet::EPOCH_COUNT],
 
-            cc: cc::new_congestion_control(
-                config.cc_algorithm,
-                config.init_cwnd,
-                config.init_pacing_rate,
-            ),
+            cc: cc::new_congestion_control(config.cc_algorithm),
 
             app_limited: false,
-
-            pns_in_fec_group: Default::default(),
-
-            m: 10,
-            n: 1,
-            last_adjust_time: None,
-            min_filter: minmax::Minmax::<i8>::new(),
-            delta: 0,
         }
     }
 
@@ -177,21 +152,6 @@ impl Recovery {
         &mut self, pkt: Sent, epoch: packet::Epoch, handshake_completed: bool,
         now: Instant, trace_id: &str,
     ) {
-        // Process fec group packet number list.
-        if pkt.fec_info.group_id != 0 {
-            trace!("send: {} {} {} {} {}", pkt.fec_info.group_id, pkt.fec_info.m, pkt.fec_info.n, pkt.size, pkt.fec_info.index);
-            let pns_group = self
-                .pns_in_fec_group
-                .entry(pkt.fec_info.group_id)
-                .or_insert(fec::FecPacketNumbers::new(
-                    pkt.fec_info.m,
-                    pkt.fec_info.n,
-                ));
-            pns_group.packet_sent(pkt.fec_info.index, pkt.pkt_num);
-        }
-        else {
-            trace!("send: {} {} {} {} {}", pkt.fec_info.group_id, pkt.fec_info.m, pkt.fec_info.n, pkt.size, pkt.fec_info.index);
-        }
         let ack_eliciting = pkt.ack_eliciting;
         let in_flight = pkt.in_flight;
         let sent_bytes = pkt.size;
@@ -199,7 +159,7 @@ impl Recovery {
         self.largest_sent_pkt[epoch] =
             cmp::max(self.largest_sent_pkt[epoch], pkt.pkt_num);
 
-        // self.sent[epoch].insert(pkt.pkt_num, pkt); // TODO: posision 1
+        self.sent[epoch].insert(pkt.pkt_num, pkt);
 
         if in_flight {
             if ack_eliciting {
@@ -207,17 +167,19 @@ impl Recovery {
             }
 
             self.app_limited =
-                (self.cc.bytes_in_flight() + sent_bytes + 1350) < self.cc.cwnd();
+                (self.cc.bytes_in_flight() + sent_bytes) + 1350 < self.cc.cwnd();
+            trace!(
+                "bytes_in_flight={}   sent_bytes={}   cwnd={}",
+                self.cc.bytes_in_flight(),
+                sent_bytes,
+                self.cc.cwnd()
+            );
 
             // OnPacketSentCC
-            if epoch >= 2 {
-                self.cc.on_packet_sent_cc(&pkt, sent_bytes, trace_id);
-            }
+            self.cc.on_packet_sent_cc(sent_bytes, trace_id);
 
             self.set_loss_detection_timer(handshake_completed);
         }
-
-        self.sent[epoch].insert(pkt.pkt_num, pkt); // TODO: from position1 is valid ?
 
         trace!("{} {:?}", trace_id, self);
     }
@@ -225,53 +187,79 @@ impl Recovery {
     pub fn on_ack_received(
         &mut self, ranges: &ranges::RangeSet, ack_delay: u64,
         epoch: packet::Epoch, handshake_completed: bool, now: Instant,
-        trace_id: &str,
+        trace_id: &str, pkt_num_space: &mut packet::PktNumSpace,
+        paths: &mut [path::Path; crate::PATH_NUM],
+        path: usize,
     ) -> Result<()> {
-        //println!("receive");
-        self.cc.cc_bbr_begin_ack(now);
-        let largest_acked = ranges.largest().unwrap();
+        // let largest_acked = ranges.largest().unwrap();
 
-        // If the largest packet number acked exceeds any packet number we have
-        // sent, then the ACK is obviously invalid, so there's no need to
-        // continue further.
-        if largest_acked > self.largest_sent_pkt[epoch] {
-            if cfg!(feature = "fuzzing") {
-                return Ok(());
-            }
+        // // If the largest packet number acked exceeds any packet number we have
+        // // sent, then the ACK is obviously invalid, so there's no need to
+        // // continue further.
+        // if largest_acked > self.largest_sent_pkt[epoch] {
+        //     if cfg!(feature = "fuzzing") {
+        //         return Ok(());
+        //     }
 
-            return Err(Error::InvalidPacket);
-        }
+        //     return Err(Error::InvalidPacket);
+        // }
 
-        if self.largest_acked_pkt[epoch] == std::u64::MAX {
-            self.largest_acked_pkt[epoch] = largest_acked;
-        } else {
-            self.largest_acked_pkt[epoch] =
-                cmp::max(self.largest_acked_pkt[epoch], largest_acked);
-        }
+        // if self.largest_acked_pkt[epoch] == std::u64::MAX {
+        //     self.largest_acked_pkt[epoch] = largest_acked;
+        // } else {
+        //     self.largest_acked_pkt[epoch] =
+        //         cmp::max(self.largest_acked_pkt[epoch], largest_acked);
+        // }
 
-        if let Some(pkt) = self.sent[epoch].get(&self.largest_acked_pkt[epoch]) {
-            if pkt.ack_eliciting {
-                debug!(
-                    "recovery cal rtt : {}",
-                    Instant::now().duration_since(pkt.time).as_millis()
-                );
-                let latest_rtt = now - pkt.time;
+        // if let Some(pkt) = self.sent[epoch].get(&self.largest_acked_pkt[epoch]) {
+        //     if pkt.ack_eliciting {
+        //         let latest_rtt = now - pkt.time;
 
-                let ack_delay = if epoch == packet::EPOCH_APPLICATION {
-                    Duration::from_micros(ack_delay)
-                } else {
-                    Duration::from_micros(0)
-                };
+        //         let ack_delay = if epoch == packet::EPOCH_APPLICATION {
+        //             Duration::from_micros(ack_delay)
+        //         } else {
+        //             Duration::from_micros(0)
+        //         };
 
-                self.update_rtt(latest_rtt, ack_delay);
-            }
-        }
+        //         self.update_rtt(latest_rtt, ack_delay);
+        //     }
+        // }
 
         let mut has_newly_acked = false;
+        let mut newly_acked = false;
+
+        if newly_acked {
+            return Ok(());
+        }
+
+        // Each path maintains its own largest_acked packet_number value
+        let mut largest_acked_firstpath = 0;
+        let mut largest_acked_subseqpath = 0;
+
+        // Record whether an ACK frame acknowledges the packets sent on a certain path.
+        let mut ack_packet_on_firstpath: bool = false;
+        let mut ack_packet_on_subseqpath: bool = false;
 
         // Processing acked packets in reverse order (from largest to smallest)
         // appears to be faster, possibly due to the BTreeMap implementation.
         for pn in ranges.flatten().rev() {
+            let path_id = pkt_num_space.pkts_sent_with_pathid.get(&pn);
+
+            let init: usize = 0;
+            let subseq: usize = 1;
+
+            if path_id == Some(&init) && !ack_packet_on_firstpath {
+                ack_packet_on_firstpath = true;
+                largest_acked_firstpath = pn;
+                break;
+            } else if path_id == Some(&subseq) && !ack_packet_on_subseqpath {
+                ack_packet_on_subseqpath = true;
+                largest_acked_subseqpath = pn;
+                break;
+            } else {
+                info!("none starts");
+                continue;
+            }
             // If the acked packet number is lower than the lowest unacked packet
             // number it means that the packet is not newly acked, so return
             // early.
@@ -280,31 +268,189 @@ impl Recovery {
             // that as soon as we see an already-acked packet number
             // all following packet numbers will also be already
             // acked.
-            if let Some(lowest) = self.sent[epoch].values().nth(0) {
-                if pn < lowest.pkt_num {
-                    break;
-                }
+            // if let Some(lowest) = self.sent[epoch].values().nth(0) {
+            //     if pn < lowest.pkt_num {
+            //         break;
+            //     }
+            // }
+
+            // let newly_acked = self.on_packet_acked(pn, epoch, trace_id);
+            // has_newly_acked = cmp::max(has_newly_acked, newly_acked);
+
+            // if newly_acked {
+            //     trace!("{} packet newly acked {}", trace_id, pn);
+            // }
+        }
+
+        // Update rtt of two paths
+        // There are acked packets sent from the first path.
+        if ack_packet_on_firstpath {
+            // Get first path largest_acked_pkt
+            if paths[0].recovery.largest_acked_pkt[epoch] == std::u64::MAX {
+                paths[0].recovery.largest_acked_pkt[epoch] =
+                    largest_acked_firstpath;
+            } else {
+                paths[0].recovery.largest_acked_pkt[epoch] = cmp::max(
+                    paths[0].recovery.largest_acked_pkt[epoch],
+                    largest_acked_firstpath,
+                );
             }
 
-            let newly_acked = self.on_packet_acked(pn, epoch, trace_id);
-            has_newly_acked = cmp::max(has_newly_acked, newly_acked);
+            if let Some(pkt) = paths[0].recovery.sent[epoch]
+                .get(&paths[0].recovery.largest_acked_pkt[epoch])
+            {
+                if pkt.ack_eliciting {
+                    let latest_rtt = now - pkt.time;
+
+                    let ack_delay = if epoch == packet::EPOCH_APPLICATION {
+                        Duration::from_micros(ack_delay)
+                    } else {
+                        Duration::from_micros(0)
+                    };
+                    if path == 0 {
+                        info!("*****Path 0 update rtt!****");
+                        paths[0].recovery.update_rtt(latest_rtt, ack_delay); // rtt
+                    }
+                }
+            }
+        }
+
+        // There are acked packets sent from the subseqent path.
+        if ack_packet_on_subseqpath {
+            // Get second path largest_acked_pkt
+            if paths[1].recovery.largest_acked_pkt[epoch] == std::u64::MAX {
+                paths[1].recovery.largest_acked_pkt[epoch] =
+                    largest_acked_subseqpath;
+            } else {
+                paths[1].recovery.largest_acked_pkt[epoch] = cmp::max(
+                    paths[1].recovery.largest_acked_pkt[epoch],
+                    largest_acked_subseqpath,
+                );
+            }
+
+            if let Some(pkt) = paths[1].recovery.sent[epoch]
+                .get(&paths[1].recovery.largest_acked_pkt[epoch])
+            {
+                if pkt.ack_eliciting {
+                    let latest_rtt = now - pkt.time;
+
+                    let ack_delay = if epoch == packet::EPOCH_APPLICATION {
+                        Duration::from_micros(ack_delay)
+                    } else {
+                        Duration::from_micros(0)
+                    };
+                    if path == 1 {
+                        info!("*****Path 1 update rtt!****");
+                        paths[1].recovery.update_rtt(latest_rtt, ack_delay); // rtt
+                    }
+                }
+            }
+        }
+
+        let mut ack_num = 0;
+
+        let mut all_pkt_acked_paths = vec![false; crate::PATH_NUM];
+        for pn in ranges.flatten().rev() {
+            if let Some(lowest_first) =
+                paths[0].recovery.sent[epoch].values().nth(0)
+            {
+                if pn < lowest_first.pkt_num {
+                    all_pkt_acked_paths[0] = true;
+                }
+            }
+            if let Some(lowest_subseq) =
+                paths[1].recovery.sent[epoch].values().nth(0)
+            {
+                if pn < lowest_subseq.pkt_num {
+                    all_pkt_acked_paths[1] = true;
+                }
+            }
+            if all_pkt_acked_paths[0] && path == 0 {
+                break;
+            }
+            if all_pkt_acked_paths[1] && path == 1 {
+                break;
+            }
+
+            let path_id = pkt_num_space.pkts_sent_with_pathid.get(&pn);
+
+            info!("pathid {:?}", path_id);
+
+            // TODO: Unstable way to compare
+            let init: usize = 0;
+            let subseq: usize = 1;
+
+            if path_id == Some(&init) {
+                info!("*******pn:{}, first path****************", pn);
+                // ack_packet_on_firstpath = true;
+
+                newly_acked =
+                    paths[0].recovery.on_packet_acked(pn, epoch, trace_id);
+                if newly_acked {
+                    ack_num = ack_num + 1;
+                }
+                has_newly_acked = cmp::max(has_newly_acked, newly_acked);
+            } else if path_id == Some(&subseq) {
+                info!("*******pn:{}, subseq path****************", pn);
+                // ack_packet_on_subseqpath = true;
+
+                newly_acked =
+                    paths[1].recovery.on_packet_acked(pn, epoch, trace_id);
+                if newly_acked {
+                    ack_num = ack_num + 1;
+                }
+                has_newly_acked = cmp::max(has_newly_acked, newly_acked);
+            } else {
+                newly_acked = false;
+                continue;
+            }
 
             if newly_acked {
+                pkt_num_space.pkts_sent_with_pathid.remove(&pn);
                 trace!("{} packet newly acked {}", trace_id, pn);
             }
         }
 
+        info!("ack num {}", ack_num);
         if !has_newly_acked {
-            self.cc.cc_bbr_end_ack();
             return Ok(());
         }
 
-        self.cc.cc_bbr_end_ack();
-        self.detect_lost_packets(epoch, now, trace_id);
+        if ack_packet_on_firstpath {
+            info!("***********Path 0 detect lost packet**********");
+            paths[0].recovery.detect_lost_packets(
+                epoch,
+                now,
+                trace_id,
+                paths[0].pkts_num_with_seq.clone(),
+            );
 
-        self.pto_count = 0;
+            paths[0].recovery.pto_count = 0;
+            paths[0]
+                .recovery
+                .set_loss_detection_timer(handshake_completed);
+        }
 
-        self.set_loss_detection_timer(handshake_completed);
+        if ack_packet_on_subseqpath {
+            info!("***********Path 1 detect lost packet**********");
+            paths[1].recovery.detect_lost_packets(
+                epoch,
+                now,
+                trace_id,
+                paths[1].pkts_num_with_seq.clone(),
+            );
+
+            paths[1].recovery.pto_count = 0;
+            paths[1]
+                .recovery
+                .set_loss_detection_timer(handshake_completed);
+        }
+
+        // self.detect_lost_packets(epoch, now, trace_id);
+
+        // self.pto_count = 0;
+
+        // self.set_loss_detection_timer(handshake_completed);
 
         trace!("{} {:?}", trace_id, self);
 
@@ -313,12 +459,14 @@ impl Recovery {
 
     pub fn on_loss_detection_timeout(
         &mut self, handshake_completed: bool, now: Instant, trace_id: &str,
+        pkts_num_with_seq: HashMap<u64, u64>,
     ) {
         let (earliest_loss_time, epoch) =
             self.earliest_loss_time(self.loss_time, handshake_completed);
 
         if earliest_loss_time.is_some() {
-            self.detect_lost_packets(epoch, now, trace_id);
+            info!("*********earliest_loss_time***********");
+            self.detect_lost_packets(epoch, now, trace_id, pkts_num_with_seq);
             self.set_loss_detection_timer(handshake_completed);
 
             trace!("{} {:?}", trace_id, self);
@@ -335,6 +483,7 @@ impl Recovery {
         self.loss_probes[epoch] = 2;
 
         self.pto_count += 1;
+        info!("pto count {}", self.pto_count);
 
         self.set_loss_detection_timer(handshake_completed);
 
@@ -342,16 +491,14 @@ impl Recovery {
     }
 
     pub fn drop_unacked_data(&mut self, epoch: packet::Epoch) {
+        info!("drop function");
         let mut unacked_bytes = 0;
 
         for p in self.sent[epoch].values_mut().filter(|p| p.in_flight) {
             unacked_bytes += p.size;
         }
 
-        debug!("drop_unacked_data");
-        if epoch >= 2 {
-            self.cc.decrease_bytes_in_flight(unacked_bytes);
-        }
+        self.cc.decrease_bytes_in_flight(unacked_bytes);
 
         self.loss_time[epoch] = None;
         self.loss_probes[epoch] = 0;
@@ -371,21 +518,6 @@ impl Recovery {
         if self.loss_probes.iter().any(|&x| x > 0) {
             return std::usize::MAX;
         }
-
-        let now_time_ms = match time::SystemTime::now()
-            .duration_since(time::SystemTime::UNIX_EPOCH)
-        {
-            Ok(n) => n.as_millis(),
-            Err(_) => panic!("SystemTime before UNIX EPOCH!"),
-        };
-
-        debug!(
-            "timestamp: {} ms; cwnd {} bytes; bytes_in_flight {} bytes ; available {} bytes",
-            now_time_ms,
-            self.cc.cwnd(),
-            self.cc.bytes_in_flight(),
-            self.cc.cwnd().saturating_sub(self.cc.bytes_in_flight()),
-        );
 
         self.cc.cwnd().saturating_sub(self.cc.bytes_in_flight())
     }
@@ -407,9 +539,10 @@ impl Recovery {
                 self.min_rtt = latest_rtt;
 
                 self.smoothed_rtt = Some(latest_rtt);
+                info!("smoothed_rtt1 {:?}", self.smoothed_rtt);
 
                 self.rttvar = latest_rtt / 2;
-            },
+            }
 
             Some(srtt) => {
                 self.min_rtt = cmp::min(self.min_rtt, latest_rtt);
@@ -423,13 +556,14 @@ impl Recovery {
                     latest_rtt
                 };
 
-                self.rttvar = self.rttvar.mul_f64(3.0 / 4.0) +
-                    sub_abs(srtt, adjusted_rtt).mul_f64(1.0 / 4.0);
+                self.rttvar = self.rttvar.mul_f64(3.0 / 4.0)
+                    + sub_abs(srtt, adjusted_rtt).mul_f64(1.0 / 4.0);
 
                 self.smoothed_rtt = Some(
                     srtt.mul_f64(7.0 / 8.0) + adjusted_rtt.mul_f64(1.0 / 8.0),
                 );
-            },
+                info!("**smoothed_rtt:{:?}**", self.smoothed_rtt);
+            }
         }
     }
 
@@ -465,6 +599,7 @@ impl Recovery {
         if earliest_loss_time.is_some() {
             // Time threshold loss detection.
             self.loss_detection_timer = earliest_loss_time;
+            info!("loss_detection_timer1 {:?}", self.loss_detection_timer);
             return;
         }
 
@@ -481,6 +616,8 @@ impl Recovery {
             Some(_) => self.pto() * 2_u32.pow(self.pto_count),
         };
 
+        info!("timeout {}", timeout.as_millis());
+
         let (sent_time, _) = self.earliest_loss_time(
             self.time_of_last_sent_ack_eliciting_pkt,
             handshake_completed,
@@ -488,17 +625,20 @@ impl Recovery {
 
         if let Some(sent_time) = sent_time {
             self.loss_detection_timer = Some(sent_time + timeout);
+            info!("loss_detection_timer2 {:?}", self.loss_detection_timer);
         }
     }
 
     fn detect_lost_packets(
         &mut self, epoch: packet::Epoch, now: Instant, trace_id: &str,
+        pkts_num_with_seq: HashMap<u64, u64>,
     ) {
         let largest_acked = self.largest_acked_pkt[epoch];
 
         let mut lost_pkt: Vec<u64> = Vec::new();
 
         self.loss_time[epoch] = None;
+        info!("set loss time none");
 
         let loss_delay =
             cmp::max(self.latest_rtt, self.rtt()).mul_f64(TIME_THRESHOLD);
@@ -511,8 +651,20 @@ impl Recovery {
 
         for (_, unacked) in self.sent[epoch].range(..=largest_acked) {
             // Mark packet as lost, or set time when it should be marked.
-            if unacked.time <= lost_send_time ||
-                largest_acked >= unacked.pkt_num + PACKET_THRESHOLD
+            // if unacked.time <= lost_send_time ||
+            //     largest_acked >= unacked.pkt_num + PACKET_THRESHOLD
+            info!("lost_send_time {:?}", lost_send_time);
+            info!("unacked.time {:?}", unacked.time);
+            info!(
+                "unacked.time <= lost_send_time {}",
+                unacked.time <= lost_send_time
+            );
+            if unacked.time <= lost_send_time
+                || (pkts_num_with_seq.contains_key(&largest_acked)
+                    && pkts_num_with_seq.contains_key(&unacked.pkt_num)
+                    && *(pkts_num_with_seq.get(&largest_acked).unwrap())
+                        >= (*(pkts_num_with_seq.get(&unacked.pkt_num).unwrap())
+                            + PACKET_THRESHOLD))
             {
                 if unacked.in_flight {
                     trace!(
@@ -527,14 +679,17 @@ impl Recovery {
                 // simply keep track of the number so it can be removed later.
                 lost_pkt.push(unacked.pkt_num);
             } else {
+                info!("loss time update");
                 let loss_time = match self.loss_time[epoch] {
                     None => unacked.time + loss_delay,
 
-                    Some(loss_time) =>
-                        cmp::min(loss_time, unacked.time + loss_delay),
+                    Some(loss_time) => {
+                        cmp::min(loss_time, unacked.time + loss_delay)
+                    }
                 };
 
                 self.loss_time[epoch] = Some(loss_time);
+                info!("epoch {} loss time {:?}", epoch, loss_time);
             }
         }
 
@@ -549,72 +704,17 @@ impl Recovery {
         // Check if packet is newly acked.
         if let Some(mut p) = self.sent[epoch].remove(&pkt_num) {
             self.acked[epoch].append(&mut p.frames);
-            debug!("packet inflight : {}", p.in_flight);
-            if p.fec_info.group_id != 0 {
-                let pns_group =
-                    self.pns_in_fec_group.get_mut(&p.fec_info.group_id).unwrap();
-                pns_group.packet_acked(p.pkt_num);
-                // begin collect sample.
-                if let Some(delta) = pns_group.get_delta() {
-                    let now = Instant::now();
-                    match self.last_adjust_time {
-                        None => {
-                            self.last_adjust_time = Some(now);
-                            self.delta = self.min_filter.reset(now, delta);
-                        },
-                        Some(last_time) => {
-                            debug!("collect new sample {} at {:?}, last time is: {:?}", delta, now, last_time);
-                            self.delta = self.min_filter.running_min(
-                                self.min_rtt * 2,
-                                now,
-                                delta,
-                            );
-                            if last_time + self.min_rtt * 2 > now {
-                                // begin adjustment.
-                                let adjusted_n = self.n as i8 - self.delta;
-                                if adjusted_n < 1 {
-                                    self.n = 1;
-                                } else {
-                                    self.n = adjusted_n as u8;
-                                }
-                                self.m = (self.cc.pacing_rate() *
-                                    self.min_rtt.as_millis() as u64 /
-                                    8000 /
-                                    1350)
-                                    .try_into()
-                                    .unwrap_or(std::u8::MAX);
-                                debug!(
-                                    "m: {} , n: {} , delta: {} ",
-                                    self.m, self.n, self.delta
-                                );
-                                // reset last_time stamp
-                                self.last_adjust_time = Some(now);
-                            }
-                        },
-                    }
-                }
-                if let Some(recovered_pns) = pns_group.get_recovered_pns() {
-                    for recovered_pn in recovered_pns {
-                        self.on_packet_recovered(recovered_pn);
-                    }
-                }
-            }
 
             if p.in_flight {
                 // OnPacketAckedCC(acked_packet)
-
-                if epoch >= 2 {
-                    self.cc.on_packet_acked_cc(
-                        &p,
-                        self.rtt(),
-                        self.min_rtt,
-                        self.latest_rtt,
-                        self.app_limited,
-                        trace_id,
-                        epoch, 
-                        self.lost_count
-                    );
-                }
+                trace!("OnPacketAckedCC(acked_packet)");
+                self.cc.on_packet_acked_cc(
+                    &p,
+                    self.rtt(),
+                    self.min_rtt,
+                    self.app_limited,
+                    trace_id,
+                );
             }
 
             return true;
@@ -622,12 +722,6 @@ impl Recovery {
 
         // Is not newly acked.
         false
-    }
-
-    fn on_packet_recovered(&mut self, pkt_num: u64) {
-        if let Some(p) = self.sent[packet::EPOCH_APPLICATION].get_mut(&pkt_num) {
-            self.acked[packet::EPOCH_APPLICATION].append(&mut p.frames);
-        }
     }
 
     // TODO: move to Congestion Control and implement draft 24
@@ -657,16 +751,8 @@ impl Recovery {
             if !p.in_flight {
                 continue;
             }
-            debug!("on_packet_lost");
-            if epoch >= 2 {
-                self.cc.decrease_bytes_in_flight(p.size);
-            }
 
-            if p.fec_info.group_id != 0 {
-                let pns_group =
-                    self.pns_in_fec_group.get_mut(&p.fec_info.group_id).unwrap();
-                pns_group.packet_lost(p.pkt_num);
-            }
+            self.cc.decrease_bytes_in_flight(p.size);
 
             self.lost[epoch].append(&mut p.frames);
 
@@ -675,15 +761,8 @@ impl Recovery {
 
         if let Some(largest_lost_pkt) = largest_lost_pkt {
             // CongestionEvent
-            self.cc.congestion_event(
-                self.rtt(),
-                largest_lost_pkt.time,
-                now,
-                trace_id,
-                largest_lost_pkt.pkt_num,
-                epoch,
-                self.lost_count
-            );
+            self.cc
+                .congestion_event(largest_lost_pkt.time, now, trace_id);
 
             if self.in_persistent_congestion(&largest_lost_pkt) {
                 self.cc.collapse_cwnd();
@@ -704,11 +783,11 @@ impl std::fmt::Debug for Recovery {
                 } else {
                     write!(f, "timer=exp ")?;
                 }
-            },
+            }
 
             None => {
                 write!(f, "timer=none ")?;
-            },
+            }
         };
 
         write!(f, "latest_rtt={:?} ", self.latest_rtt)?;

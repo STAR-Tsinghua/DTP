@@ -54,7 +54,7 @@ impl log::Log for Logger {
     }
 
     fn log(&self, record: &log::Record) {
-        let line = format!("[{}] {}: {}\0",record.level(), record.target(), record.args());
+        let line = format!("{}: {}\0", record.target(), record.args());
         (self.cb)(line.as_ptr(), self.argp.load(atomic::Ordering::Relaxed));
     }
 
@@ -72,7 +72,7 @@ pub extern fn quiche_enable_debug_logging(
         return -1;
     }
 
-    log::set_max_level(log::LevelFilter::Info);
+    log::set_max_level(log::LevelFilter::Trace);
 
     0
 }
@@ -231,21 +231,6 @@ pub extern fn quiche_config_set_cc_algorithm(
     config.set_cc_algorithm(algo);
 }
 
-// update by mc
-#[no_mangle]
-pub extern fn quiche_config_set_data_ack_ratio(
-    config: &mut Config, ratio: u64
-) {
-    config.init_data_ack_ratio = ratio;
-}
-// update by mc
-#[no_mangle]
-pub extern fn quiche_config_set_redundancy_rate(
-    config: &mut Config, rate: f32
-) {
-    config.init_redundancy_rate = rate;
-}
-
 #[no_mangle]
 pub extern fn quiche_config_free(config: *mut Config) {
     unsafe { Box::from_raw(config) };
@@ -307,7 +292,7 @@ pub extern fn quiche_header_info(
                 token.copy_from_slice(&tok);
 
                 *token_len = tok.len();
-            },
+            }
 
             None => *token_len = 0,
         }
@@ -420,7 +405,7 @@ pub extern fn quiche_conn_new_with_tls(
 
 #[no_mangle]
 pub extern fn quiche_conn_recv(
-    conn: &mut Connection, buf: *mut u8, buf_len: size_t,
+    conn: &mut Connection, buf: *mut u8, buf_len: size_t, path: size_t,
 ) -> ssize_t {
     if buf_len > <ssize_t>::max_value() as usize {
         panic!("The provided buffer is too large");
@@ -428,7 +413,7 @@ pub extern fn quiche_conn_recv(
 
     let buf = unsafe { slice::from_raw_parts_mut(buf, buf_len) };
 
-    match conn.recv(buf) {
+    match conn.recv(buf, path) {
         Ok(v) => v as ssize_t,
 
         Err(e) => e.to_c(),
@@ -437,7 +422,7 @@ pub extern fn quiche_conn_recv(
 
 #[no_mangle]
 pub extern fn quiche_conn_send(
-    conn: &mut Connection, out: *mut u8, out_len: size_t,
+    conn: &mut Connection, out: *mut u8, out_len: size_t, path: size_t,
 ) -> ssize_t {
     if out_len > <ssize_t>::max_value() as usize {
         panic!("The provided buffer is too large");
@@ -445,7 +430,7 @@ pub extern fn quiche_conn_send(
 
     let out = unsafe { slice::from_raw_parts_mut(out, out_len) };
 
-    match conn.send(out) {
+    match conn.send(out, path) {
         Ok(v) => v as ssize_t,
 
         Err(e) => e.to_c(),
@@ -477,7 +462,7 @@ pub extern fn quiche_conn_stream_recv(
 #[no_mangle]
 pub extern fn quiche_conn_stream_send_full(
     conn: &mut Connection, stream_id: u64, buf: *const u8, buf_len: size_t,
-    fin: bool, deadline: u64, priority: u64, depend_id: u64,
+    fin: bool, deadline: u64, priority: u64,
 ) -> ssize_t {
     if buf_len > <ssize_t>::max_value() as usize {
         panic!("The provided buffer is too large");
@@ -485,9 +470,7 @@ pub extern fn quiche_conn_stream_send_full(
 
     let buf = unsafe { slice::from_raw_parts(buf, buf_len) };
 
-    match conn
-        .stream_send_full(stream_id, buf, fin, deadline, priority, depend_id)
-    {
+    match conn.stream_send_full(stream_id, buf, fin, deadline, priority) {
         Ok(v) => v as ssize_t,
 
         Err(e) => e.to_c(),
@@ -521,19 +504,6 @@ pub extern fn quiche_conn_get_block_info(
     *block_size = size;
     *block_priority = priority;
     *block_deadline = deadline;
-}
-
-// return pacing rate (sec)
-#[no_mangle]
-pub extern fn quiche_bbr_get_pacing_rate(conn: &Connection) -> u64 {
-    conn.get_pacing_rate() // bits/s
-}
-
-#[no_mangle]
-pub extern fn quiche_conn_stream_received(
-    conn: &Connection, stream_id: u64,
-) -> bool {
-    conn.stream_received(stream_id)
 }
 
 #[no_mangle]
@@ -650,6 +620,11 @@ pub extern fn quiche_conn_is_established(conn: &mut Connection) -> bool {
 }
 
 #[no_mangle]
+pub extern fn quiche_conn_second_path_is_established(conn: &mut Connection) {
+    conn.set_second_path_completed();
+}
+
+#[no_mangle]
 pub extern fn quiche_conn_is_in_early_data(conn: &mut Connection) -> bool {
     conn.is_in_early_data()
 }
@@ -664,7 +639,11 @@ pub extern fn quiche_stream_iter_next(
     iter: &mut StreamIter, stream_id: *mut u64,
 ) -> bool {
     if let Some(v) = iter.next() {
-        unsafe { *stream_id = v };
+        unsafe {
+            *stream_id = v;
+            info!("v {}\n", v);
+            info!("iter streamid{}\n", *stream_id);
+        };
         return true;
     }
 
@@ -680,11 +659,13 @@ pub extern fn quiche_stream_iter_free(iter: *mut StreamIter) {
 pub struct Stats {
     pub recv: usize,
     pub sent: usize,
-    pub lost: usize,
-    pub rtt: u64,
-    pub cwnd: usize,
-    pub recv_bytes: u64,
-    pub sent_bytes: u64 
+    // pub lost: usize,
+    // pub rtt: u64,
+    // pub cwnd: usize,
+    pub lost_init: usize,
+    pub lost_subseq: usize,
+    pub rtt_init: u64,
+    pub rtt_subseq: u64,
 }
 
 #[no_mangle]
@@ -693,9 +674,13 @@ pub extern fn quiche_conn_stats(conn: &Connection, out: &mut Stats) {
 
     out.recv = stats.recv;
     out.sent = stats.sent;
-    out.lost = stats.lost;
-    out.rtt = stats.rtt.as_nanos() as u64;
-    out.cwnd = stats.cwnd;
+    // out.lost = stats.lost;
+    // out.rtt = stats.rtt.as_nanos() as u64;
+    // out.cwnd = stats.cwnd;
+    out.lost_init = stats.lost_init;
+    out.lost_subseq = stats.lost_subseq;
+    out.rtt_init = stats.rtt_init.as_nanos() as u64;
+    out.rtt_subseq = stats.rtt_subseq.as_nanos() as u64;
 }
 
 #[no_mangle]
@@ -716,10 +701,8 @@ pub extern fn quiche_conn_get_good_recv(
 }
 
 #[no_mangle]
-pub extern fn quiche_conn_priority_weight(
-    conn: &mut Connection, priority_weight: f64,
-) {
-    conn.streams.set_priority_weight(priority_weight);
+pub extern fn quiche_conn_priority_weight(conn: &mut Connection, weight: f64) {
+    conn.streams.set_weight(weight);
 }
 
 #[no_mangle]
@@ -728,6 +711,66 @@ pub extern fn quiche_conn_min_priority(conn: &mut Connection, min_priority: u64)
 }
 
 #[no_mangle]
-pub extern fn quiche_conn_set_tail(conn: &mut Connection, tail_size: u64) {
-    conn.set_tail(tail_size);
+pub extern fn mp_mapping_pcid_to_mcid(
+    conn: &mut Connection, pcid: *const u8, pcid_len: size_t, mcid: *mut u8,
+    mcid_len: *mut size_t,
+) -> bool {
+    let (init_scid, subseq_scid) = conn.get_path_scid();
+    let pcid = unsafe { slice::from_raw_parts(pcid, pcid_len) };
+
+    info!("print init_scid");
+    for i in 0..init_scid.len() {
+        info!("{:X}", init_scid[i]);
+    }
+    info!("--------");
+    info!("print subseq_scid");
+    for i in 0..subseq_scid.len() {
+        info!("{:X}", subseq_scid[i]);
+    }
+    info!("--------");
+    info!("print pcid");
+    for i in 0..pcid.len() {
+        info!("{:X}", pcid[i]);
+    }
+    info!("--------");
+
+    if pcid == init_scid || pcid == subseq_scid {
+        // println!("mapping!-------------");
+
+        unsafe {
+            let mcid = slice::from_raw_parts_mut(mcid, *mcid_len);
+            let mcid = &mut mcid[..init_scid.len()];
+            mcid.copy_from_slice(init_scid);
+            *mcid_len = init_scid.len();
+        }
+        return true;
+    }
+    return false;
+}
+
+#[no_mangle]
+pub extern fn initiate_second_path(
+    conn: &mut Connection, pscid: *mut u8, pscid_len: usize, pdcid: *mut u8,
+    pdcid_len: usize,
+) {
+    let pscid = unsafe { slice::from_raw_parts_mut(pscid, pscid_len) };
+    let pdcid = unsafe { slice::from_raw_parts_mut(pdcid, pdcid_len) };
+    conn.set_subseq_path_id(pscid, pdcid);
+}
+
+#[no_mangle]
+pub extern fn quiche_conn_get_path_one_way_delay_update(
+    conn: &mut Connection, owd: u64, path: u8,
+) {
+    conn.get_one_way_delay_update(owd as f64, path);
+}
+
+#[no_mangle]
+pub extern fn quiche_conn_get_pacing_rate(conn: &Connection, path: size_t) -> f64 {
+    conn.get_pacing_rate(path)
+}
+
+#[no_mangle]
+pub extern fn quiche_conn_schedule(conn: &mut Connection, re_schedule: bool) {
+    conn.schedule_prio_mp(re_schedule);
 }

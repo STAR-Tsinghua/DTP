@@ -30,39 +30,26 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::cc;
-use crate::packet;
 use crate::recovery::Sent;
 
 pub const INITIAL_WINDOW_PACKETS: usize = 10;
 
-pub const MINIMUM_WINDOW_PACKETS: usize = 2;
-
 pub const INITIAL_WINDOW: usize = INITIAL_WINDOW_PACKETS * MAX_DATAGRAM_SIZE;
 
-pub const MINIMUM_WINDOW: usize = MINIMUM_WINDOW_PACKETS * MAX_DATAGRAM_SIZE;
+pub const MINIMUM_WINDOW: usize = 2 * MAX_DATAGRAM_SIZE;
 
 pub const MAX_DATAGRAM_SIZE: usize = 1452;
 
 pub const LOSS_REDUCTION_FACTOR: f64 = 0.5;
 
-// RFC3465 Slow Start burst limit constant
-const ABC_L: usize = 2;
-
 /// Available congestion control algorithms.
 ///
 /// This enum provides currently available list of congestion control
 /// algorithms.
-#[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Algorithm {
     /// Reno congestion control algorithm (default). `reno` in a string form.
-    Reno      = 0,
-    /// BBR congestion control algorithm
-    BBR       = 1,
-    /// cc_trigger in Aitrans solution
-    CcTrigger = 2,
-    /// CUBIC congestion control algorithm
-    CUBIC     = 3
+    Reno = 0,
 }
 
 impl FromStr for Algorithm {
@@ -74,9 +61,6 @@ impl FromStr for Algorithm {
     fn from_str(name: &str) -> Result<Self, Self::Err> {
         match name {
             "reno" => Ok(Algorithm::Reno),
-            "bbr" => Ok(Algorithm::BBR),
-            "cc_trigger" => Ok(Algorithm::CcTrigger),
-            "cubic" => Ok(Algorithm::CUBIC),
             _ => Err(crate::Error::CongestionControl),
         }
     }
@@ -87,7 +71,7 @@ pub trait CongestionControl
 where
     Self: std::fmt::Debug,
 {
-    fn new(init_cwnd: u64, init_pacing_rate: u64) -> Self
+    fn new() -> Self
     where
         Self: Sized;
 
@@ -103,15 +87,14 @@ where
     fn collapse_cwnd(&mut self);
 
     /// OnPacketSentCC(bytes_sent)
-    fn on_packet_sent_cc(
-        &mut self, pkt: &Sent, bytes_sent: usize, trace_id: &str,
-    );
+    fn on_packet_sent_cc(&mut self, bytes_sent: usize, trace_id: &str);
 
     /// InCongestionRecovery(sent_time)
     fn in_congestion_recovery(&self, sent_time: Instant) -> bool {
         match self.congestion_recovery_start_time() {
-            Some(congestion_recovery_start_time) =>
-                sent_time <= congestion_recovery_start_time,
+            Some(congestion_recovery_start_time) => {
+                sent_time <= congestion_recovery_start_time
+            }
 
             None => false,
         }
@@ -119,51 +102,21 @@ where
 
     /// OnPacketAckedCC(packet)
     fn on_packet_acked_cc(
-        &mut self, 
-        packet: &Sent, 
-        srtt: Duration, min_rtt: Duration, latest_rtt: Duration,
+        &mut self, packet: &Sent, srtt: Duration, min_rtt: Duration,
         app_limited: bool, trace_id: &str,
-        epoch: packet::Epoch, lost_count: usize
     );
 
     /// CongestionEvent(time_sent)
     fn congestion_event(
-        &mut self, 
-        srtt: Duration, time_sent: Instant, now: Instant,
-        trace_id: &str, packet_id: u64,
-        epoch: packet::Epoch, lost_count: usize
-    );
-
-    /// bbr function
-
-    /// pacing_rate
-    fn pacing_rate(&self) -> u64;
-
-    /// bbr_begin_ack, end_ack
-    fn cc_bbr_begin_ack(&mut self, ack_time: Instant);
-    fn cc_bbr_end_ack(&mut self);
-    fn bbr_min_rtt(&mut self) -> Duration;
-
-    /// aitrans
-    fn cc_trigger(
-        &mut self, event_type: char, rtt: u64, bytes_in_flight: u64,
-        packet_id: u64,
+        &mut self, time_sent: Instant, now: Instant, trace_id: &str,
     );
 }
 
 /// Instances a congestion control implementation based on the CC algorithm ID.
-pub fn new_congestion_control(
-    algo: Algorithm, init_cwnd: u64, init_pacing_rate: u64,
-) -> Box<dyn CongestionControl> {
+pub fn new_congestion_control(algo: Algorithm) -> Box<dyn CongestionControl> {
     trace!("Initializing congestion control: {:?}", algo);
     match algo {
-        Algorithm::Reno =>
-            Box::new(cc::reno::Reno::new(init_cwnd, init_pacing_rate)),
-        Algorithm::BBR => Box::new(cc::bbr::BBR::default()),
-        Algorithm::CcTrigger =>
-            Box::new(cc::cc_trigger::CCTrigger::new(init_cwnd, init_pacing_rate)),
-        Algorithm::CUBIC => 
-            Box::new(cc::cubic::Cubic::new(init_cwnd, init_pacing_rate))
+        Algorithm::Reno => Box::new(cc::reno::Reno::new()),
     }
 }
 
@@ -171,13 +124,13 @@ pub fn new_congestion_control(
 mod tests {
     use super::*;
 
-    // #[test]
-    // fn new_cc() {
-    //     let cc = new_congestion_control(Algorithm::Reno);
+    #[test]
+    fn new_cc() {
+        let cc = new_congestion_control(Algorithm::Reno);
 
-    //     assert!(cc.cwnd() > 0);
-    //     assert_eq!(cc.bytes_in_flight(), 0);
-    // }
+        assert!(cc.cwnd() > 0);
+        assert_eq!(cc.bytes_in_flight(), 0);
+    }
 
     #[test]
     fn lookup_cc_algo_ok() {
@@ -195,8 +148,4 @@ mod tests {
     }
 }
 
-mod bbr;
-mod cc_trigger;
 mod reno;
-mod hystart;
-mod cubic;

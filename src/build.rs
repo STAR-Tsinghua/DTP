@@ -2,22 +2,22 @@
 //
 // Android NDK < 18 with GCC.
 const CMAKE_PARAMS_ANDROID_NDK_OLD_GCC: &[(&str, &[(&str, &str)])] = &[
-    ("aarch64", &[(
-        "ANDROID_TOOLCHAIN_NAME",
-        "aarch64-linux-android-4.9",
-    )]),
-    ("arm", &[(
-        "ANDROID_TOOLCHAIN_NAME",
-        "arm-linux-androideabi-4.9",
-    )]),
-    ("x86", &[(
-        "ANDROID_TOOLCHAIN_NAME",
-        "x86-linux-android-4.9",
-    )]),
-    ("x86_64", &[(
-        "ANDROID_TOOLCHAIN_NAME",
-        "x86_64-linux-android-4.9",
-    )]),
+    (
+        "aarch64",
+        &[("ANDROID_TOOLCHAIN_NAME", "aarch64-linux-android-4.9")],
+    ),
+    (
+        "arm",
+        &[("ANDROID_TOOLCHAIN_NAME", "arm-linux-androideabi-4.9")],
+    ),
+    (
+        "x86",
+        &[("ANDROID_TOOLCHAIN_NAME", "x86-linux-android-4.9")],
+    ),
+    (
+        "x86_64",
+        &[("ANDROID_TOOLCHAIN_NAME", "x86_64-linux-android-4.9")],
+    ),
 ];
 
 // Android NDK >= 19.
@@ -29,22 +29,34 @@ const CMAKE_PARAMS_ANDROID_NDK: &[(&str, &[(&str, &str)])] = &[
 ];
 
 const CMAKE_PARAMS_IOS: &[(&str, &[(&str, &str)])] = &[
-    ("aarch64", &[
-        ("CMAKE_OSX_ARCHITECTURES", "arm64"),
-        ("CMAKE_OSX_SYSROOT", "iphoneos"),
-    ]),
-    ("arm", &[
-        ("CMAKE_OSX_ARCHITECTURES", "arm"),
-        ("CMAKE_OSX_SYSROOT", "iphoneos"),
-    ]),
-    ("x86", &[
-        ("CMAKE_OSX_ARCHITECTURES", "x86"),
-        ("CMAKE_OSX_SYSROOT", "iphonesimulator"),
-    ]),
-    ("x86_64", &[
-        ("CMAKE_OSX_ARCHITECTURES", "x86_64"),
-        ("CMAKE_OSX_SYSROOT", "iphonesimulator"),
-    ]),
+    (
+        "aarch64",
+        &[
+            ("CMAKE_OSX_ARCHITECTURES", "arm64"),
+            ("CMAKE_OSX_SYSROOT", "iphoneos"),
+        ],
+    ),
+    (
+        "arm",
+        &[
+            ("CMAKE_OSX_ARCHITECTURES", "arm"),
+            ("CMAKE_OSX_SYSROOT", "iphoneos"),
+        ],
+    ),
+    (
+        "x86",
+        &[
+            ("CMAKE_OSX_ARCHITECTURES", "x86"),
+            ("CMAKE_OSX_SYSROOT", "iphonesimulator"),
+        ],
+    ),
+    (
+        "x86_64",
+        &[
+            ("CMAKE_OSX_ARCHITECTURES", "x86_64"),
+            ("CMAKE_OSX_SYSROOT", "iphonesimulator"),
+        ],
+    ),
 ];
 
 /// Returns the platform-specific output path for lib.
@@ -106,7 +118,7 @@ fn get_boringssl_cmake_config() -> cmake::Config {
             boringssl_cmake.define("ANDROID_STL", "c++_shared");
 
             boringssl_cmake
-        },
+        }
 
         "ios" => {
             for (ios_arch, params) in CMAKE_PARAMS_IOS {
@@ -123,7 +135,7 @@ fn get_boringssl_cmake_config() -> cmake::Config {
             boringssl_cmake.cflag("-fembed-bitcode");
 
             boringssl_cmake
-        },
+        }
 
         _ => {
             // Configure BoringSSL for building on 32-bit non-windows platforms.
@@ -136,7 +148,7 @@ fn get_boringssl_cmake_config() -> cmake::Config {
             }
 
             boringssl_cmake
-        },
+        }
     }
 }
 
@@ -204,27 +216,4 @@ fn main() {
     if cfg!(feature = "pkg-config-meta") {
         write_pkg_config();
     }
-
-    let mut build = cc::Build::new();
-
-    // build.file("src/aitrans/pre_solution.cxx")
-        //  .include("src/aitrans/include");
-
-    if !cfg!(feature = "interface") {
-        build.file("src/aitrans/solution.cxx")
-             .include("src/aitrans/include")
-             .flag("-w")
-             .cpp(true)
-             .compile("aitrans");
-    }
-
-    // build.cpp(true)
-        //  .compile("aitrans");
-    // cc::Build::new()
-    //     .file("src/aitrans/pre_solution.cxx")
-    //     .file("src/aitrans/solution.cxx")
-    //     .include("src/aitrans/include")
-    //     .include("src/aitrans/libtorch/include")
-    //     .flag("-w")
-    //     .compile("aitrans");
 }

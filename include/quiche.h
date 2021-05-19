@@ -166,16 +166,10 @@ void quiche_config_set_disable_active_migration(quiche_config *config, bool v);
 
 enum quiche_cc_algorithm {
     QUICHE_CC_RENO = 0,
-    QUICHE_CC_BBR = 1,
-    Aitrans_CC_TRIGGER = 2,
-    QUICHE_CC_CUBIC = 3
 };
 
 // Sets the congestion control algorithm used.
 void quiche_config_set_cc_algorithm(quiche_config *config, enum quiche_cc_algorithm algo);
-
-// Sets the data ack ratios
-void quiche_config_set_data_ack_ratio(quiche_config *config, uint64_t ratio);
 
 // Frees the config object.
 void quiche_config_free(quiche_config *config);
@@ -221,10 +215,10 @@ quiche_conn *quiche_conn_new_with_tls(const uint8_t *scid, size_t scid_len,
                                       bool is_server);
 
 // Processes QUIC packets received from the peer.
-ssize_t quiche_conn_recv(quiche_conn *conn, uint8_t *buf, size_t buf_len);
+ssize_t quiche_conn_recv(quiche_conn *conn, uint8_t *buf, size_t buf_len, uint8_t path);
 
 // Writes a single QUIC packet to be sent to the peer.
-ssize_t quiche_conn_send(quiche_conn *conn, uint8_t *out, size_t out_len);
+ssize_t quiche_conn_send(quiche_conn *conn, uint8_t *out, size_t out_len, uint8_t path);
 
 // Buffer holding data at a specific offset.
 typedef struct RangeBuf quiche_rangebuf;
@@ -241,19 +235,14 @@ void quiche_conn_priority_weight(quiche_conn *conn, double weight);
 // set min priority
 void quiche_conn_min_priority(quiche_conn *conn, uint64_t min_priority);
 
-// return pacing rate of bbr
-uint64_t quiche_bbr_get_pacing_rate(quiche_conn *conn);
-
-// returns true if all data in the block is has arrived.
-bool quiche_conn_stream_received(quiche_conn *conn, uint64_t stream_id);
-
 // Writes data to a stream.
 ssize_t quiche_conn_stream_send(quiche_conn *conn, uint64_t stream_id,
                                 const uint8_t *buf, size_t buf_len, bool fin);
 
 // Writes data to a stream with deadline and priority.
 ssize_t quiche_conn_stream_send_full(quiche_conn *conn, uint64_t stream_id,
-                                const uint8_t *buf, size_t buf_len, bool fin, uint64_t deadline, uint64_t priority, uint64_t depend_id);
+                                const uint8_t *buf, size_t buf_len, bool fin, 
+                                uint64_t deadline, uint64_t priority);
 
 // Get block completion time.
 int64_t quiche_conn_get_bct(quiche_conn *conn, uint64_t stream_id);
@@ -303,6 +292,9 @@ void quiche_conn_application_proto(quiche_conn *conn, const uint8_t **out,
 // Returns true if the connection handshake is complete.
 bool quiche_conn_is_established(quiche_conn *conn);
 
+// Set true if the second path is completed.
+void quiche_conn_second_path_is_established(quiche_conn *conn);
+
 // Returns true if the connection has a pending handshake that has progressed
 // enough to send or receive early data.
 bool quiche_conn_is_in_early_data(quiche_conn *conn);
@@ -338,13 +330,17 @@ typedef struct {
     size_t sent;
 
     // The number of QUIC packets that were lost.
-    size_t lost;
+    // size_t lost;
+    size_t lost_init;
+    size_t lost_subseq;
 
     // The estimated round-trip time of the connection (in nanoseconds).
-    uint64_t rtt;
+    // uint64_t rtt;
+    uint64_t rtt_init;
+    uint64_t rtt_subseq;
 
     // The size in bytes of the connection's congestion window.
-    size_t cwnd;
+    // size_t cwnd;
 } quiche_stats;
 
 // Collects and returns statistics about the connection.
@@ -353,8 +349,29 @@ void quiche_conn_stats(quiche_conn *conn, quiche_stats *out);
 // Frees the connection object.
 void quiche_conn_free(quiche_conn *conn);
 
-// specify the tail.
-void quiche_conn_set_tail(quiche_conn *conn, uint64_t tail_size);
+/* ********* MP: Mapping PDCID(peer) to MSCID(host) **************** */
+bool mp_mapping_pcid_to_mcid(quiche_conn *conn, 
+                            const uint8_t *pcid, size_t pcid_len,
+                            uint8_t *mcid, size_t *mcid_len);
+// *******************************************************************
+
+/* ********* MP: Initiate Second Path ******************** */
+void initiate_second_path(quiche_conn *conn,
+                         const uint8_t *pscid, size_t pscid_len,
+                         const uint8_t *pdcid, size_t pdcid_len);
+// *********************************************************
+
+/* ********* MP: Get One Way Delay Update ******************** */
+void quiche_conn_get_path_one_way_delay_update(quiche_conn *conn, uint64_t owd, uint8_t path);
+// *********************************************************
+
+/* ****************** MP: Get pacing rate *************** */ 
+double quiche_conn_get_pacing_rate(quiche_conn *conn, uint8_t path);
+// *********************************************************
+
+/* ******************** MP: Schedule ******************** */ 
+void quiche_conn_schedule(quiche_conn *conn, bool re_schedule);
+// *********************************************************
 
 // HTTP/3 API
 //
