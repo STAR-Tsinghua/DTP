@@ -29,7 +29,10 @@ include = [
      "/include",
      "/quiche.svg",
      "/src",
+     "/src/cc",
+     "/src/aitrans/",
      "/src/aitrans/include",
+     "/src/aitrans/libtorch/include",
 ]
 
 [features]
@@ -51,6 +54,9 @@ ndk-old-gcc = []
 # optional, so we don't have to build them for other targets.
 bench = ["criterion"]
 
+# For building with exposing interfaces without default implementation
+interface = []
+
 [package.metadata.docs.rs]
 default-features = false
 
@@ -69,6 +75,8 @@ bitflags = "1.2"
 threadpool = "1.8.1"
 ntp = "0.5"
 time = "0.1"
+reed-solomon-erasure = { version = "4.0", features = ["simd-accel"] } # fec
+libm = "0.2"
 
 [target."cfg(windows)".dependencies]
 winapi = { version = "0.3", features = ["wincrypt"] }

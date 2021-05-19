@@ -117,9 +117,9 @@ static struct connections *conns = NULL;
 
 static void timeout_cb(EV_P_ ev_timer *w, int revents);
 
-// static void debug_log(const char *line, void *argp) {
-//     fprintf(stderr, "%s\n", line);
-// }
+static void debug_log(const char *line, void *argp) {
+    fprintf(stderr, "%s\n", line);
+}
 
 static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
     // fprintf(stderr, "enter flush\n");
@@ -629,7 +629,7 @@ int main(int argc, char *argv[]) {
                                    .ai_socktype = SOCK_DGRAM,
                                    .ai_protocol = IPPROTO_UDP};
 
-    // quiche_enable_debug_logging(debug_log, NULL);
+    quiche_enable_debug_logging(debug_log, NULL);
 
     struct addrinfo *local;
     if (getaddrinfo(host, port, &hints, &local) != 0) {
@@ -671,7 +671,7 @@ int main(int argc, char *argv[]) {
     quiche_config_set_initial_max_stream_data_bidi_local(config, 1000000000);
     quiche_config_set_initial_max_stream_data_bidi_remote(config, 1000000000);
     quiche_config_set_initial_max_streams_bidi(config, 10000);
-    quiche_config_set_cc_algorithm(config, Aitrans_CC_TRIGGER);
+    quiche_config_set_cc_algorithm(config, QUICHE_CC_CUBIC);
     // ACK ratio
     quiche_config_set_data_ack_ratio(config, 4);
 

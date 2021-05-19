@@ -168,10 +168,14 @@ enum quiche_cc_algorithm {
     QUICHE_CC_RENO = 0,
     QUICHE_CC_BBR = 1,
     Aitrans_CC_TRIGGER = 2,
+    QUICHE_CC_CUBIC = 3
 };
 
 // Sets the congestion control algorithm used.
 void quiche_config_set_cc_algorithm(quiche_config *config, enum quiche_cc_algorithm algo);
+
+// Sets the data ack ratios
+void quiche_config_set_data_ack_ratio(quiche_config *config, uint64_t ratio);
 
 // Frees the config object.
 void quiche_config_free(quiche_config *config);
@@ -239,6 +243,9 @@ void quiche_conn_min_priority(quiche_conn *conn, uint64_t min_priority);
 
 // return pacing rate of bbr
 uint64_t quiche_bbr_get_pacing_rate(quiche_conn *conn);
+
+// returns true if all data in the block is has arrived.
+bool quiche_conn_stream_received(quiche_conn *conn, uint64_t stream_id);
 
 // Writes data to a stream.
 ssize_t quiche_conn_stream_send(quiche_conn *conn, uint64_t stream_id,
@@ -346,6 +353,8 @@ void quiche_conn_stats(quiche_conn *conn, quiche_stats *out);
 // Frees the connection object.
 void quiche_conn_free(quiche_conn *conn);
 
+// specify the tail.
+void quiche_conn_set_tail(quiche_conn *conn, uint64_t tail_size);
 
 // HTTP/3 API
 //

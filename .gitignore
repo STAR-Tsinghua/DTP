@@ -1,4 +1,10 @@
 /target
 **/*.rs.bk
 Cargo.lock
+**/libtorch/**
+*.log
+*.zip
 .vscode/
+**/target
+**/build
+docker/

@@ -23,6 +23,7 @@
 // LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#![allow(dead_code)]
 
 use std::cmp;
 
@@ -60,11 +61,21 @@ pub struct Block {
 }
 
 extern {
-    fn CSelectBlock(
+    fn SolutionSelectBlock(
         blocks: *const Block, block_num: u64, next_packet_id: u64,
         current_time: u64,
     ) -> u64;
+
+    fn SolutionShouldDropBlock(block: *const Block, bandwidth: libc::c_double, rtt: libc::c_double, next_packet_id: u64, current_time: u64) -> bool;
 }
+
+/// Schedulor implementation
+///
+/// Decide which block to send next in blocks_vec
+/// 
+/// If defined feature "interface", then use C implementation of select blocks
+///
+/// Or this function implements a basic version of block selection
 pub fn select_block(
     blocks_vec: &mut Vec<Block>, next_packet_id: u64, current_time: u64,
 ) -> u64 {
@@ -72,9 +83,18 @@ pub fn select_block(
     let blocks = blocks_vec.as_mut_ptr();
     let block_num = blocks_vec.len() as u64;
     mem::forget(blocks_vec);
-    unsafe { CSelectBlock(blocks, block_num, next_packet_id, current_time) }
+    return unsafe { SolutionSelectBlock(blocks, block_num, next_packet_id, current_time) };
 }
 
+/// Drop block discriminative function
+///
+/// Decide whether a block should be dropped by the sender
+pub fn should_drop_block(
+    block: &mut Block, 
+    bandwidth: f64, rtt:f64, next_packet_id: u64, current_time: u64
+) -> bool {
+    unsafe { SolutionShouldDropBlock(block, bandwidth, rtt, next_packet_id, current_time) }        
+}
 /// Keeps track of QUIC streams and enforces stream limits.
 #[derive(Default)]
 pub struct StreamMap {
@@ -326,8 +346,14 @@ impl StreamMap {
     /// Note that if the stream is still flushable after sending some of its
     /// outstanding data, it needs to be added back to the queu.
     /// Return the stream with highest real priority value
+    pub fn pop_flushable(
+        &mut self, _bandwidth: f64, _rtt: f64, _current_time: u64,
+    ) -> Result<Option<u64>> {
+        Ok(self.flushable.pop_front())
+    }
+
     pub fn peek_flushable(
-        &mut self, _bandwidth: f64, _rtt: f64, next_packet_id: u64,
+        &mut self, bandwidth: f64, rtt: f64, next_packet_id: u64,
         current_time: u64,
     ) -> Result<Option<u64>> {
         if !self.has_flushable() {
@@ -338,10 +364,12 @@ impl StreamMap {
             for i in (0..self.flushable.len()).rev() {
                 let &id = self.flushable.get(i).unwrap();
                 // check if need to cancel this block
-                let stream = self.get(id).unwrap();
-                let passed_time =
-                    stream.send.start_instant.unwrap().elapsed().as_millis();
-                if passed_time as u64 > stream.send.deadline {
+                // let stream = self.get(id).unwrap();
+                // let passed_time =
+                //     stream.send.start_instant.unwrap().elapsed().as_millis();
+                // create block structure for C++
+                let mut block = self.get_block(id);
+                if should_drop_block(&mut block, bandwidth, rtt, next_packet_id, current_time) {
                     self.cancel_block(id)?;
                     // Block canceled, so non-flushable
                     trace!(
@@ -352,7 +380,6 @@ impl StreamMap {
                     continue;
                 }
                 // add the block struct to blocks, and used by C++ code later
-                let block = self.get_block(id);
                 blocks_vec.push(block);
             }
             if blocks_vec.is_empty() {
@@ -440,7 +467,7 @@ impl StreamMap {
         // Once shutdown, the stream is guaranteed to be non-writable.
         self.mark_writable(stream_id, false);
         eprintln!("block {} miss deadline, canceled\n", stream_id);
-        info!(
+        debug!(
             "cancel block {},len of streams: {}",
             stream_id,
             self.streams.len()
@@ -1014,7 +1041,7 @@ impl RecvBuf {
 
             if self.bct <= 200 {
                 match stream_id {
-                    Some(id) => info!(
+                    Some(id) => debug!(
                         "goodbytes of stream {} add {} bytes",
                         id,
                         self.len as usize - self.good_recv
@@ -1141,6 +1168,11 @@ impl RecvBuf {
         false
     }
 
+    /// Returns true if all data of the stream has been received.
+    pub fn all_received(&self) -> bool {
+        self.fin_off == Some(self.len)
+    }
+
     /// Returns true if the stream has data to be read.
     fn ready(&self) -> bool {
         let buf = match self.data.peek() {
@@ -1197,7 +1229,7 @@ pub struct SendBuf {
     off: u64,
 
     /// The amount of data that was ever written to this stream.
-    len: u64,
+    pub len: u64,
 
     /// The maximum offset we are allowed to send to the peer.
     max_data: u64,

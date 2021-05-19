@@ -32,6 +32,7 @@ use crate::Error;
 use crate::Result;
 
 use crate::crypto;
+use crate::fec;
 use crate::octets;
 use crate::rand;
 use crate::ranges;
@@ -145,6 +146,9 @@ pub struct Header {
     /// The key phase bit of the packet. It's only meaningful after the header
     /// protection is removed.
     pub(crate) key_phase: bool,
+
+    /// FEC info
+    pub fec_info: fec::FecStatus,
 }
 
 impl Header {
@@ -177,18 +181,32 @@ impl Header {
 
         if !Header::is_long(first) {
             // Decode short header.
-            let dcid = b.get_bytes(dcid_len)?;
+            let dcid = b.get_bytes(dcid_len)?.to_vec();
+            let group_id = b.get_u32()?;
+            let index = b.get_u8()?;
+            let m = b.get_u8()?;
+            let n = b.get_u8()?;
+            let padding = b.get_u8()?;
+            for _ in 0..padding {
+                b.get_u8()?;
+            }
 
             return Ok(Header {
                 ty: Type::Short,
                 version: 0,
-                dcid: dcid.to_vec(),
+                dcid,
                 scid: Vec::new(),
                 pkt_num: 0,
                 pkt_num_len: 0,
                 token: None,
                 versions: None,
                 key_phase: false,
+                fec_info: fec::FecStatus {
+                    group_id,
+                    index,
+                    m,
+                    n,
+                },
             });
         }
 
@@ -263,6 +281,7 @@ impl Header {
             token,
             versions,
             key_phase: false,
+            fec_info: Default::default(),
         })
     }
 
@@ -289,6 +308,15 @@ impl Header {
 
             out.put_u8(first)?;
             out.put_bytes(&self.dcid)?;
+            out.put_u32(self.fec_info.group_id)?;
+            out.put_u8(self.fec_info.index)?;
+            out.put_u8(self.fec_info.m)?;
+            out.put_u8(self.fec_info.n)?;
+            let padding = 4 - self.pkt_num_len as u8;
+            out.put_u8(padding)?;
+            for _ in 0..padding {
+                out.put_u8(0)?;
+            }
 
             return Ok(());
         }
@@ -353,39 +381,58 @@ impl std::fmt::Debug for Header {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{:?}", self.ty)?;
 
-        if self.ty != Type::Short {
-            write!(f, " version={:x}", self.version)?;
-        }
+        // if self.ty != Type::Application {
+        // write!(f, " version={:x}", self.version)?;
+        // }
 
-        write!(f, " dcid=")?;
-        for b in &self.dcid {
-            write!(f, "{:02x}", b)?;
-        }
+        // write!(f, " dcid=")?;
+        // for b in &self.dcid {
+        // write!(f, "{:02x}", b)?;
+        // }
 
-        if self.ty != Type::Short {
-            write!(f, " scid=")?;
-            for b in &self.scid {
-                write!(f, "{:02x}", b)?;
-            }
-        }
+        // if self.ty != Type::Application {
+        // write!(f, " scid=")?;
+        // for b in &self.scid {
+        // write!(f, "{:02x}", b)?;
+        // }
+        // }
 
-        if let Some(ref token) = self.token {
-            write!(f, " token=")?;
-            for b in token {
-                write!(f, "{:02x}", b)?;
-            }
-        }
+        // if let Some(ref odcid) = self.odcid {
+        // write!(f, " odcid=")?;
+        // for b in odcid {
+        // write!(f, "{:02x}", b)?;
+        // }
+        // }
 
-        if let Some(ref versions) = self.versions {
-            write!(f, " versions={:x?}", versions)?;
-        }
+        // if let Some(ref token) = self.token {
+        // write!(f, " token=")?;
+        // for b in token {
+        // write!(f, "{:02x}", b)?;
+        // }
+        // }
+
+        // if let Some(ref versions) = self.versions {
+        // write!(f, " versions={:x?}", versions)?;
+        // }
 
         if self.ty == Type::Short {
-            write!(f, " key_phase={}", self.key_phase)?;
+            // write!(f, " key_phase={}", self.key_phase)?;
+            write!(f, " fec info={:?}", self.fec_info)?;
         }
 
         Ok(())
     }
+}
+
+/// Update fec info inside packet header. b is packet buffer.
+pub fn update_fec_info(b: &mut octets::Octets, hdr: &Header) -> Result<()> {
+    let fec_offset = 1 + hdr.dcid.len();
+    let (_, mut info_buf) = b.split_at(fec_offset)?;
+    info_buf.put_u32(hdr.fec_info.group_id)?;
+    info_buf.put_u8(hdr.fec_info.index)?;
+    info_buf.put_u8(hdr.fec_info.m)?;
+    info_buf.put_u8(hdr.fec_info.n)?;
+    Ok(())
 }
 
 pub fn pkt_num_len(pn: u64) -> Result<usize> {
@@ -594,6 +641,7 @@ pub fn retry(
         token: Some(token.to_vec()),
         versions: None,
         key_phase: false,
+        fec_info: Default::default(),
     };
 
     hdr.to_bytes(&mut b)?;
@@ -786,6 +834,7 @@ mod tests {
             token: Some(vec![0xba; 24]),
             versions: None,
             key_phase: false,
+            fec_info: Default::default(),
         };
 
         let mut d = [0; 63];
@@ -812,6 +861,7 @@ mod tests {
             token: Some(vec![0x05, 0x06, 0x07, 0x08]),
             versions: None,
             key_phase: false,
+            fec_info: Default::default(),
         };
 
         let mut d = [0; 50];
@@ -838,6 +888,7 @@ mod tests {
             token: Some(vec![0x05, 0x06, 0x07, 0x08]),
             versions: None,
             key_phase: false,
+            fec_info: Default::default(),
         };
 
         let mut d = [0; 50];
@@ -864,6 +915,7 @@ mod tests {
             token: Some(vec![0x05, 0x06, 0x07, 0x08]),
             versions: None,
             key_phase: false,
+            fec_info: Default::default(),
         };
 
         let mut d = [0; 50];
@@ -890,6 +942,7 @@ mod tests {
             token: Some(vec![0x05, 0x06, 0x07, 0x08]),
             versions: None,
             key_phase: false,
+            fec_info: Default::default(),
         };
 
         let mut d = [0; 50];
@@ -913,6 +966,7 @@ mod tests {
             token: None,
             versions: None,
             key_phase: false,
+            fec_info: Default::default(),
         };
 
         let mut d = [0; 50];
@@ -936,6 +990,12 @@ mod tests {
             token: None,
             versions: None,
             key_phase: false,
+            fec_info: fec::FecStatus {
+                m: 10,
+                n: 1,
+                group_id: 10,
+                index: 1,
+            },
         };
 
         let mut d = [0; 50];
@@ -945,6 +1005,44 @@ mod tests {
 
         let mut b = octets::Octets::with_slice(&mut d);
         assert_eq!(Header::from_bytes(&mut b, 9).unwrap(), hdr);
+    }
+
+    #[test]
+    fn modify_header() -> Result<()> {
+        let mut hdr = Header {
+            ty: Type::Short,
+            version: 0,
+            dcid: vec![0xba, 0xba, 0xba, 0xba, 0xba, 0xba, 0xba, 0xba, 0xba],
+            scid: vec![],
+            pkt_num: 0,
+            pkt_num_len: 0,
+            token: None,
+            versions: None,
+            key_phase: false,
+            fec_info: fec::FecStatus {
+                m: 10,
+                n: 1,
+                group_id: 10,
+                index: 1,
+            },
+        };
+
+        let mut d = [0; 50];
+        let mut b = octets::Octets::with_slice(&mut d);
+        assert!(hdr.to_bytes(&mut b).is_ok());
+
+        let mut b = octets::Octets::with_slice(&mut d);
+        assert_eq!(Header::from_bytes(&mut b, 9).unwrap(), hdr);
+
+        hdr.fec_info.index = 2;
+        hdr.fec_info.m = 9;
+        hdr.fec_info.n = 3;
+        let mut b = octets::Octets::with_slice(&mut d);
+        update_fec_info(&mut b, &hdr)?;
+
+        let mut b = octets::Octets::with_slice(&mut d);
+        assert_eq!(Header::from_bytes(&mut b, 9).unwrap(), hdr);
+        Ok(())
     }
 
     #[test]
@@ -1585,6 +1683,7 @@ mod tests {
             token: None,
             versions: None,
             key_phase: false,
+            fec_info: Default::default(),
         };
 
         hdr.to_bytes(&mut b).unwrap();

@@ -44,7 +44,7 @@ use std::collections::BTreeMap;
 use std::collections::VecDeque;
 
 // use crate::frame;
-// use crate::packet;
+use crate::packet;
 // use crate::ranges;
 
 use crate::cc;
@@ -1122,7 +1122,7 @@ impl BBR {
         };
 
         if self.bbr_mode != mode {
-            info!(
+            debug!(
                 "timestamp: {} ms; BBR :: mode change {:?} -> {:?}",
                 now_time_ms, self.bbr_mode, mode
             );
@@ -1164,6 +1164,7 @@ impl BBR {
                 "timestamp: {} ms, self.bbr_pacing_rate.value= {}",
                 now_time_ms, self.bbr_pacing_rate.value
             );
+            println!("pacing:{}", self.bbr_pacing_rate.value);
             return self.bbr_pacing_rate.value;
         } else {
             let min_rtt = self.get_min_rtt();
@@ -1177,6 +1178,7 @@ impl BBR {
                 now_time_ms,
                 bw.bw_value()
             );
+            println!("pacing:{}", bw.bw_value());
             return bw.bw_value();
         }
     }
@@ -1674,6 +1676,7 @@ impl BBR {
         } else {
             cwnd = self.bbr_cwnd;
         }
+        // println!("BBR cwnd:{}", cwnd);
         return cwnd;
     }
 
@@ -2311,7 +2314,7 @@ impl BwSampler {
             Ok(n) => n.as_millis(),
             Err(_) => panic!("SystemTime before UNIX EPOCH!"),
         };
-        info!(
+        debug!(
             "timestamp: {} ms; send rate {} bps; ack rate {} bps; ",
             now_time_ms, send_rate.value, ack_rate.value
         );
@@ -2508,8 +2511,11 @@ impl cc::CongestionControl for BBR {
     }
 
     fn on_packet_acked_cc(
-        &mut self, packet: &Sent, _srtt: Duration, _min_rtt: Duration,
+        &mut self, 
+        packet: &Sent, 
+        _srtt: Duration, _min_rtt: Duration, _latest_rtt: Duration,
         app_limited: bool, _trace_id: &str,
+        _epoch: packet::Epoch, _lost_count: usize
     ) {
         self.bbr_bytes_in_flight -= packet.size as u64; // TODO
 
@@ -2558,8 +2564,10 @@ impl cc::CongestionControl for BBR {
     }
 
     fn congestion_event(
-        &mut self, _srtt: Duration, _time_sent: Instant, _now: Instant,
+        &mut self,
+        _srtt: Duration, _time_sent: Instant, _now: Instant,
         _trace_id: &str, _packet_id: u64,
+        _epoch: packet::Epoch, _lost_count: usize
     ) {
         // Start a new congestion event if packet was sent after the
         // start of the previous congestion recovery period.

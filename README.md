@@ -1,7 +1,3 @@
-# AitranDTP docker autobuild
-
-本分支用于内部开发人员的 server docker 环境开发。本分支增加了一些文档和脚本来帮助后来者进行开发。
-
 ## 环境安装
 
 目前确认正确运行的环境：
@@ -10,49 +6,48 @@
 2. Docker: 20.10.5
 3. Rustc: 1.50.0
 4. python: 3.8.8
+\*\* 5. libtorch: 1.9.0.dev20210417+cpu
 
-## 开发工作说明
+一些依赖库的安装方法(以 Ubuntu18.04 为例)：
 
-### 仓库编译方法说明
+1. ev: `sudo apt install libev-dev`
+2. uthash: `sudo apt install uthash-dev`
+3. \*\* libtorch: 从 https://pytorch.org/resources/ 的页面最下方，选择 Nightly, Linux（其他操作系统未测试）, LibTorch, C++, CPU ，下载 **cxx11 ABI** 版本。并且将解压后的 libtorch 目录复制到 aitrans 目录下，形成`src/aitrans/libtorch/*`的目录结构
+
+** 注：libtorch 目前不是强制需要的。只有需要在 C++ 接口中使用 pytorch 的机器学习模型的时候才会需要。
+
+于此同时，本项目的采用了 git submodule 来管理部分组件，不要忘记进行同步。
+
+```bash
+git submodule init
+git submodule update
+```
+
+boringssl 库在国内 git 下载速度缓慢，建议直接下载压缩文件：https://github.com/google/boringssl
+
+## 额外添加 C 接口说明
+
+目前开放的 C 的接口如下：
+
+1. `uint64_t SolutionAckRatio`：返回一个正整数 n ，代表每 n 个数据包发送一个 ACK 包。目前建议返回一个固定数值。默认返回`4`
+2. `float SolutionRedundancy`：返回一个 \[0, +\) 的浮点数，代表增加的额外冗余程度。可以根据不同的情况提供不同的冗余程度，默认返回为`0`。\*注1 
+3. `bool SolutionShouldDropBlock`：返回一个 bool 类型变量，代表对于每一个数据包，是否应该在发包之前将其丢弃。返回 true 则代表丢弃该数据包。
+4. `void SolutionInit`：初始化 C 代码所需要的数据
+5. `uint64_t SolutionSelectBlock`：从数据块数组中选择出下一个传输的数据块
+6. `void SolutionCcTrigger`：根据拥塞控制算法相关的信息来执行拥塞控制相关算法的实现
+
+算法接口的具体定义可以见`src/aitrans/include`
+
+* 注1：所谓冗余程度指的是如果有$m$个原本的数据包，那么给定冗余程度$\alpha$，那么会产生额外的$n = \alpha m$个数据包，那么其可以忍受最大为$n$的丢包，也就是说一共会传输$m+n$个数据包，只要收到了其中的任何$m$个数据包便可恢复所有数据。
+
+## 仓库编译方法说明
 
 本分支基于 AItransDTP 进行开发，AItransDTP 因为对外暴露了 C 的接口，在程序的编译和运行过程上和 DTP 有一定的区别，这里稍微进行说明。
 
-本仓库的主体是 DTP Rust crate, 其中`src/aitrans`目录下是 AItransDTP 中新增加的接口代码。这会将原仓库中拥塞控制部分的算法拓展出一个 C 的接口，并且将接口外的代码编译成动态链接库。在最终的可执行文件编译的过程中，需要先通过编译 Rust 仓库形成 libquiche.a ，将 Rust 代码编译成静态链接库；再通过编译`src/aitrans`目录下的文件形成动态链接库；最后利用两个库来编译可执行文件。`examples`目录下的`server.c`文件便是利用这种方法进行编译的，可以通过`examples`目录下的 Makefile 进行快速的编译操作。
+本仓库的主体是 DTP Rust crate, 其中`src/aitrans`目录下是 AItransDTP 中新增加的接口代码。这会将原仓库中部分算法模块拓展出一个 C 的接口，并且将接口外的代码编译成动态链接库。在最终的可执行文件编译的过程中，需要先通过编译 Rust 仓库形成 libquiche.a ，将 Rust 代码编译成静态链接库；再通过编译`src/aitrans`目录下的文件形成动态链接库；最后利用两个库来编译可执行文件。`examples`目录下的`server.c`文件便是利用这种方法进行编译的，可以通过`examples`目录下的 Makefile 进行快速的编译操作。
 
 关于这种编译方式以及接口的开发方法，有一个演示仓库可以用于参考 https://github.com/simonkorl/rust_link_demo 。该参考仓库模仿了本仓库的编译方式，并且给出了如何进行 Rust 和 C 的交叉编程。
 
-### docker 环境开发说明
-
-`docker`目录下有若干用于辅助内部进行镜像开发的工具，其中生成的镜像内容会在目录`docker/aitrans-server`中。
-
-为了得到可以运行的 AItransDTP server 镜像，目前**必须**提供如下的内容：
-
-1. 一个基于 DTP 开发的 client 端
-    * 这可以从 `windows_app_client` 分支编译得到。对应可执行文件需要处于`docker/aitrans-server`目录下
-2. 一个基于 AItransDTP 开发的 server 端
-    * 可执行文件需要位于`docker/aitrans-server/bin`目录下
-3. server 端所需要使用 trace
-    * 格式详见 https://github.com/AItransCompetition/AitransSolution/blob/master/final_datasets/README.md 。可以使用`docker/block_trace`目录下的工具生成。生成出来的 trace 文件需要位于 `docker/aitrans-server/trace/block_trace`目录下。
-4. server 端运行需要依赖的 libsolution.so 
-    * 需要通过 `solution.hxx` 编译得到。
-    * 需要位于 `docker/aitrans-server/lib` 目录下
-5. server 需要的密钥
-    * 将`examples`目录下的 cert.crt 与 cert.key 复制到`docker/aitrans-server`目录下
-
-**注**：如果你还打算使用“一键运行”脚本（位于 `docker/tools_demo`目录下。可以查看该目录下的说明文档来了解更多的信息）。那么你还需要做如下的事情：
-
-1. 将你的需要编译成 libsolution.so 的文件复制到 `docker/aitrans-server/demo` 目录下。目前其中包括了基础的 solution.hxx, solution.cxx
-    * 你可以利用“一键运行”脚本完成这个复制操作。请阅读说明文档来了解如何完成这件事
-
-## 基础编译与测试
-
-在完成上述的 docker 环境准备工作后在`examples`下可以运行下面的指令
-
-* `make server` 可以生成 server 可执行文件和所需要依赖的 libsolution.so 库文件
-* `make pre_docker` 会在 docker 文件夹中准备好 docker 需要的所有文件。会执行 docker 目录下的脚本`pre_docker.sh`
-* `make build` 会构建一个名称为 `aitrans_ubuntu:0.0.2` 的镜像到本地。执行的脚本为`build_image.sh`
-* `make image_test` 会在构建好最新的镜像后运行测试程序。执行的脚本为`image_test.sh`
-* `make clean` 会删除所有生成的可执行文件，但是不会影响到 docker 目录下的所有内容。在重新编译 server 前都需要运行这条指令
 ## 额外帮助
 
 一些额外的信息可以在 https://github.com/AItransCompetition/AitransSolution/tree/master/doc 找到。

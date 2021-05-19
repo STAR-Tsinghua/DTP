@@ -3,3 +3,4 @@ server
 client_trace
 build/
 *aitrans*.log
+__pycache__/

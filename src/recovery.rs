@@ -26,18 +26,22 @@
 
 use std::cmp;
 
+use std::convert::TryInto;
 use std::time;
 use std::time::Duration;
 use std::time::Instant;
 
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use crate::Config;
 use crate::Error;
 use crate::Result;
 
 use crate::cc;
+use crate::fec;
 use crate::frame;
+use crate::minmax;
 use crate::packet;
 use crate::ranges;
 
@@ -65,6 +69,8 @@ pub struct Sent {
     pub ack_eliciting: bool,
 
     pub in_flight: bool,
+
+    pub fec_info: fec::FecStatus,
 }
 
 pub struct Recovery {
@@ -103,6 +109,15 @@ pub struct Recovery {
     pub cc: Box<dyn cc::CongestionControl>,
 
     app_limited: bool,
+
+    /// fec group packet numbers
+    pns_in_fec_group: HashMap<u32, fec::FecPacketNumbers>,
+
+    pub m: u8,
+    pub n: u8,
+    last_adjust_time: Option<Instant>,
+    min_filter: minmax::Minmax<i8>,
+    delta: i8,
 }
 
 impl Recovery {
@@ -147,6 +162,14 @@ impl Recovery {
             ),
 
             app_limited: false,
+
+            pns_in_fec_group: Default::default(),
+
+            m: 10,
+            n: 1,
+            last_adjust_time: None,
+            min_filter: minmax::Minmax::<i8>::new(),
+            delta: 0,
         }
     }
 
@@ -154,6 +177,21 @@ impl Recovery {
         &mut self, pkt: Sent, epoch: packet::Epoch, handshake_completed: bool,
         now: Instant, trace_id: &str,
     ) {
+        // Process fec group packet number list.
+        if pkt.fec_info.group_id != 0 {
+            trace!("send: {} {} {} {} {}", pkt.fec_info.group_id, pkt.fec_info.m, pkt.fec_info.n, pkt.size, pkt.fec_info.index);
+            let pns_group = self
+                .pns_in_fec_group
+                .entry(pkt.fec_info.group_id)
+                .or_insert(fec::FecPacketNumbers::new(
+                    pkt.fec_info.m,
+                    pkt.fec_info.n,
+                ));
+            pns_group.packet_sent(pkt.fec_info.index, pkt.pkt_num);
+        }
+        else {
+            trace!("send: {} {} {} {} {}", pkt.fec_info.group_id, pkt.fec_info.m, pkt.fec_info.n, pkt.size, pkt.fec_info.index);
+        }
         let ack_eliciting = pkt.ack_eliciting;
         let in_flight = pkt.in_flight;
         let sent_bytes = pkt.size;
@@ -189,6 +227,7 @@ impl Recovery {
         epoch: packet::Epoch, handshake_completed: bool, now: Instant,
         trace_id: &str,
     ) -> Result<()> {
+        //println!("receive");
         self.cc.cc_bbr_begin_ack(now);
         let largest_acked = ranges.largest().unwrap();
 
@@ -340,7 +379,7 @@ impl Recovery {
             Err(_) => panic!("SystemTime before UNIX EPOCH!"),
         };
 
-        info!(
+        debug!(
             "timestamp: {} ms; cwnd {} bytes; bytes_in_flight {} bytes ; available {} bytes",
             now_time_ms,
             self.cc.cwnd(),
@@ -511,15 +550,69 @@ impl Recovery {
         if let Some(mut p) = self.sent[epoch].remove(&pkt_num) {
             self.acked[epoch].append(&mut p.frames);
             debug!("packet inflight : {}", p.in_flight);
+            if p.fec_info.group_id != 0 {
+                let pns_group =
+                    self.pns_in_fec_group.get_mut(&p.fec_info.group_id).unwrap();
+                pns_group.packet_acked(p.pkt_num);
+                // begin collect sample.
+                if let Some(delta) = pns_group.get_delta() {
+                    let now = Instant::now();
+                    match self.last_adjust_time {
+                        None => {
+                            self.last_adjust_time = Some(now);
+                            self.delta = self.min_filter.reset(now, delta);
+                        },
+                        Some(last_time) => {
+                            debug!("collect new sample {} at {:?}, last time is: {:?}", delta, now, last_time);
+                            self.delta = self.min_filter.running_min(
+                                self.min_rtt * 2,
+                                now,
+                                delta,
+                            );
+                            if last_time + self.min_rtt * 2 > now {
+                                // begin adjustment.
+                                let adjusted_n = self.n as i8 - self.delta;
+                                if adjusted_n < 1 {
+                                    self.n = 1;
+                                } else {
+                                    self.n = adjusted_n as u8;
+                                }
+                                self.m = (self.cc.pacing_rate() *
+                                    self.min_rtt.as_millis() as u64 /
+                                    8000 /
+                                    1350)
+                                    .try_into()
+                                    .unwrap_or(std::u8::MAX);
+                                debug!(
+                                    "m: {} , n: {} , delta: {} ",
+                                    self.m, self.n, self.delta
+                                );
+                                // reset last_time stamp
+                                self.last_adjust_time = Some(now);
+                            }
+                        },
+                    }
+                }
+                if let Some(recovered_pns) = pns_group.get_recovered_pns() {
+                    for recovered_pn in recovered_pns {
+                        self.on_packet_recovered(recovered_pn);
+                    }
+                }
+            }
+
             if p.in_flight {
                 // OnPacketAckedCC(acked_packet)
+
                 if epoch >= 2 {
                     self.cc.on_packet_acked_cc(
                         &p,
                         self.rtt(),
                         self.min_rtt,
+                        self.latest_rtt,
                         self.app_limited,
                         trace_id,
+                        epoch, 
+                        self.lost_count
                     );
                 }
             }
@@ -529,6 +622,12 @@ impl Recovery {
 
         // Is not newly acked.
         false
+    }
+
+    fn on_packet_recovered(&mut self, pkt_num: u64) {
+        if let Some(p) = self.sent[packet::EPOCH_APPLICATION].get_mut(&pkt_num) {
+            self.acked[packet::EPOCH_APPLICATION].append(&mut p.frames);
+        }
     }
 
     // TODO: move to Congestion Control and implement draft 24
@@ -563,6 +662,12 @@ impl Recovery {
                 self.cc.decrease_bytes_in_flight(p.size);
             }
 
+            if p.fec_info.group_id != 0 {
+                let pns_group =
+                    self.pns_in_fec_group.get_mut(&p.fec_info.group_id).unwrap();
+                pns_group.packet_lost(p.pkt_num);
+            }
+
             self.lost[epoch].append(&mut p.frames);
 
             largest_lost_pkt = Some(p);
@@ -576,6 +681,8 @@ impl Recovery {
                 now,
                 trace_id,
                 largest_lost_pkt.pkt_num,
+                epoch,
+                self.lost_count
             );
 
             if self.in_persistent_congestion(&largest_lost_pkt) {

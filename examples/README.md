@@ -1,6 +1,12 @@
-# AItransDTP server 开发
+# TODO: DTP server/client 样例代码
 
-AItransDTP 的 examples 目录基本上只用于测试开发 server 
+## 开发辅助脚本
+
+在 `examples/` 目录下有 Makefile 文件，其中提供了若干指令：
+
+* `make server`: 可以生成 server 可执行文件，该可执行文件将生成**没有接口**的测试用服务端程序
+* `make client`: 生成 client 可执行文件
+* `make clean`: 会删除所有生成的可执行文件和构造用的 build 目录
 
 ## dtp_config.h
 

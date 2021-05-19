@@ -27,6 +27,7 @@
 use crate::Error;
 use crate::Result;
 
+use crate::fec;
 use crate::octets;
 use crate::packet;
 use crate::ranges;
@@ -148,6 +149,11 @@ pub enum Frame {
     },
 
     HandshakeDone,
+
+    Fec {
+        info: fec::FecStatus,
+        data: Vec<u8>,
+    },
 }
 
 impl Frame {
@@ -541,6 +547,10 @@ impl Frame {
             Frame::HandshakeDone => {
                 b.put_varint(0x1e)?;
             },
+
+            Frame::Fec { info: _, data } => {
+                b.put_bytes(data.as_ref())?;
+            },
         }
 
         Ok(before - b.cap())
@@ -734,6 +744,10 @@ impl Frame {
             Frame::HandshakeDone => {
                 1 // frame type
             },
+
+            Frame::Fec { info: _, data } => {
+                data.len() // no header is needed.
+            },
         }
     }
 
@@ -898,6 +912,10 @@ impl std::fmt::Debug for Frame {
 
             Frame::HandshakeDone => {
                 write!(f, "HANDSHAKE_DONE")?;
+            },
+
+            Frame::Fec { info, .. } => {
+                write!(f, "FEC frame {:?}", info)?;
             },
         }
 

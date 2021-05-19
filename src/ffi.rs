@@ -54,7 +54,7 @@ impl log::Log for Logger {
     }
 
     fn log(&self, record: &log::Record) {
-        let line = format!("{}: {}\0", record.target(), record.args());
+        let line = format!("[{}] {}: {}\0",record.level(), record.target(), record.args());
         (self.cb)(line.as_ptr(), self.argp.load(atomic::Ordering::Relaxed));
     }
 
@@ -229,6 +229,21 @@ pub extern fn quiche_config_set_cc_algorithm(
     config: &mut Config, algo: cc::Algorithm,
 ) {
     config.set_cc_algorithm(algo);
+}
+
+// update by mc
+#[no_mangle]
+pub extern fn quiche_config_set_data_ack_ratio(
+    config: &mut Config, ratio: u64
+) {
+    config.init_data_ack_ratio = ratio;
+}
+// update by mc
+#[no_mangle]
+pub extern fn quiche_config_set_redundancy_rate(
+    config: &mut Config, rate: f32
+) {
+    config.init_redundancy_rate = rate;
 }
 
 #[no_mangle]
@@ -515,6 +530,13 @@ pub extern fn quiche_bbr_get_pacing_rate(conn: &Connection) -> u64 {
 }
 
 #[no_mangle]
+pub extern fn quiche_conn_stream_received(
+    conn: &Connection, stream_id: u64,
+) -> bool {
+    conn.stream_received(stream_id)
+}
+
+#[no_mangle]
 pub extern fn quiche_conn_stream_shutdown(
     conn: &mut Connection, stream_id: u64, direction: Shutdown, err: u64,
 ) -> c_int {
@@ -661,6 +683,8 @@ pub struct Stats {
     pub lost: usize,
     pub rtt: u64,
     pub cwnd: usize,
+    pub recv_bytes: u64,
+    pub sent_bytes: u64 
 }
 
 #[no_mangle]
@@ -701,4 +725,9 @@ pub extern fn quiche_conn_priority_weight(
 #[no_mangle]
 pub extern fn quiche_conn_min_priority(conn: &mut Connection, min_priority: u64) {
     conn.streams.set_min_priority(min_priority);
+}
+
+#[no_mangle]
+pub extern fn quiche_conn_set_tail(conn: &mut Connection, tail_size: u64) {
+    conn.set_tail(tail_size);
 }

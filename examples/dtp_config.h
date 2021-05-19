@@ -1,9 +1,19 @@
+/// A dtp config refer to a set of dtp sending configuration
+/// Such configurations are always saved in 'aitrans_block.txt' file
+/// An exmaple:
+/// | send_time_gap (s) | deadline (ms) | block_size (B) | priority (1, 2, 3)|
+/// | -- | -- | -- | -- | 
+/// |0.015025005 |  200 |   1235 |   1 |
+/// | the gap between two adjasent sending | the deadline goal | the block size | the priority. Higher the number is, higher the priority is.| 
+
 #ifndef CONFIG_PD_H
 #define CONFIG_PD_H
 
 #include <ctype.h>
 #include <string.h>
 #include <sys/time.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 __uint64_t getCurrentUsec()  //usec
 {
@@ -54,6 +64,9 @@ struct dtp_config* parse_dtp_config(const char *filename, int *number)
 
         cfgs_len ++;
     }
+
+    printf("block num: %d\n", cfgs_len);
+
     *number = cfgs_len;
     fclose(fd);
     
