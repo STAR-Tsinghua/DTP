@@ -24,6 +24,7 @@
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+use std::time;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -113,6 +114,8 @@ impl cc::CongestionControl for Reno {
             self.congestion_window +=
                 (cc::MAX_DATAGRAM_SIZE * packet.size) / self.congestion_window;
         }
+        debug!("timestamp= {:?} {:?}",time::SystemTime::now()
+            .duration_since(time::SystemTime::UNIX_EPOCH).unwrap().as_millis(), self);
     }
 
     fn congestion_event(
@@ -131,6 +134,9 @@ impl cc::CongestionControl for Reno {
             self.congestion_window =
                 std::cmp::max(self.congestion_window, cc::MINIMUM_WINDOW);
             self.ssthresh = self.congestion_window;
+
+            debug!("timestamp= {:?} {:?}",time::SystemTime::now()
+            .duration_since(time::SystemTime::UNIX_EPOCH).unwrap().as_millis(), self);
         }
     }
 
@@ -158,7 +164,7 @@ impl std::fmt::Debug for Reno {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            "cwnd={} ssthresh={} bytes_in_flight={}",
+            "cwnd= {} ssthresh= {} bytes_in_flight= {}",
             self.congestion_window, self.ssthresh, self.bytes_in_flight,
         )
     }

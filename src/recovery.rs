@@ -102,6 +102,8 @@ pub struct Recovery {
 
     pub acked: [Vec<frame::Frame>; packet::EPOCH_COUNT],
 
+    pub total_pkt_nums: usize,
+
     pub lost_count: usize,
 
     pub loss_probes: [usize; packet::EPOCH_COUNT],
@@ -150,6 +152,8 @@ impl Recovery {
             lost: [Vec::new(), Vec::new(), Vec::new()],
 
             acked: [Vec::new(), Vec::new(), Vec::new()],
+
+            total_pkt_nums: 0,
 
             lost_count: 0,
 
@@ -200,6 +204,7 @@ impl Recovery {
             cmp::max(self.largest_sent_pkt[epoch], pkt.pkt_num);
 
         // self.sent[epoch].insert(pkt.pkt_num, pkt); // TODO: posision 1
+        self.total_pkt_nums += 1;
 
         if in_flight {
             if ack_eliciting {

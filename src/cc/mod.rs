@@ -162,7 +162,7 @@ pub fn new_congestion_control(
         Algorithm::BBR => Box::new(cc::bbr::BBR::default()),
         Algorithm::CcTrigger =>
             Box::new(cc::cc_trigger::CCTrigger::new(init_cwnd, init_pacing_rate)),
-        Algorithm::CUBIC => 
+        Algorithm::CUBIC =>
             Box::new(cc::cubic::Cubic::new(init_cwnd, init_pacing_rate))
     }
 }

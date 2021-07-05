@@ -33,6 +33,7 @@
 
 use std::cmp;
 
+use std::time;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -365,6 +366,8 @@ impl cc::CongestionControl for Cubic {
             }
         }
         r.bytes_acked_sl = 0;
+        debug!("timestamp= {:?} {:?}",time::SystemTime::now()
+        .duration_since(time::SystemTime::UNIX_EPOCH).unwrap().as_millis(), r);
     }
 
     fn congestion_event(
@@ -405,7 +408,8 @@ impl cc::CongestionControl for Cubic {
             if r.hystart.in_lss(epoch) {
                 r.hystart.congestion_event();
             }
-
+            debug!("timestamp= {:?} {:?}",time::SystemTime::now()
+            .duration_since(time::SystemTime::UNIX_EPOCH).unwrap().as_millis(), r);
         }
     }
 
@@ -455,7 +459,7 @@ impl std::fmt::Debug for Cubic {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            "cwnd={} ssthresh={} bytes_in_flight={}",
+            "cwnd= {} ssthresh= {} bytes_in_flight= {}",
             self.congestion_window, self.ssthresh, self.bytes_in_flight,
         )
     }

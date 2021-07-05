@@ -1164,7 +1164,7 @@ impl BBR {
                 "timestamp: {} ms, self.bbr_pacing_rate.value= {}",
                 now_time_ms, self.bbr_pacing_rate.value
             );
-            println!("pacing:{}", self.bbr_pacing_rate.value);
+            // println!("pacing:{}", self.bbr_pacing_rate.value);
             return self.bbr_pacing_rate.value;
         } else {
             let min_rtt = self.get_min_rtt();
@@ -1178,7 +1178,7 @@ impl BBR {
                 now_time_ms,
                 bw.bw_value()
             );
-            println!("pacing:{}", bw.bw_value());
+            // println!("pacing:{}", bw.bw_value());
             return bw.bw_value();
         }
     }
@@ -2002,7 +2002,7 @@ impl BBR {
             // println!("enter ack bytes");
             is_round_start = self.bbr_ack_state.max_packno >
                 self.bbr_current_round_trip_end ||
-                !self.bbr_current_round_trip_end < 0b1 << 62 - 1; // MAXIQUIC packet number
+                !(self.bbr_current_round_trip_end < 0b1 << (62 - 1)); // MAXIQUIC packet number
 
             if is_round_start {
                 self.bbr_round_count += 1;
@@ -2581,6 +2581,8 @@ impl cc::CongestionControl for BBR {
         //     std::cmp::max(self.congestion_window, cc::MINIMUM_WINDOW);
         // self.ssthresh = self.congestion_window;
         // }
+        debug!("timestamp= {:?} {:?}",time::SystemTime::now()
+        .duration_since(time::SystemTime::UNIX_EPOCH).unwrap().as_millis(), self);
     }
 
     fn cc_bbr_begin_ack(&mut self, ack_time: Instant) {
@@ -2591,6 +2593,8 @@ impl cc::CongestionControl for BBR {
     fn cc_bbr_end_ack(&mut self) {
         debug!("enter bbr_end_ack");
         self.bbr_end_ack(self.bbr_bytes_in_flight);
+        debug!("timestamp= {:?} {:?}",time::SystemTime::now()
+        .duration_since(time::SystemTime::UNIX_EPOCH).unwrap().as_millis(), self);
     }
 
     fn pacing_rate(&self) -> u64 {

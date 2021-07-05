@@ -816,7 +816,7 @@ fn log_ssl_error() {
         ERR_error_string_n(e, err.as_ptr(), err.len());
     }
 
-    trace!("{}", std::str::from_utf8(&err).unwrap());
+    error!("{}", std::str::from_utf8(&err).unwrap());
 }
 
 extern {
