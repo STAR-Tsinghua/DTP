@@ -474,7 +474,7 @@ impl Config {
             init_cwnd: cc::INITIAL_WINDOW as u64,
             init_pacing_rate: u64::max_value(),
             init_data_ack_ratio: 4,
-            init_redundancy_rate: 0.0f32
+            init_redundancy_rate: 0.0f32,
         })
     }
 
@@ -1848,7 +1848,6 @@ impl Connection {
         } else {
             cmp::min(self.recovery.cwnd_available(), b.cap())
         };
-
         // Limit data sent by the server based on the amount of data received
         // from the client before its address is validated.
         if !self.verified_peer_address && self.is_server {
@@ -1980,7 +1979,6 @@ impl Connection {
                     frames.push(frame);
                 }
             }
-
             // Create ResetStream frame, when canceled miss-deadline blocks
             if self.streams.has_canceled() {
                 for stream_id in self.streams.canceled() {
@@ -2273,6 +2271,19 @@ impl Connection {
                         (self.max_tx_data - self.tx_data) as usize,
                     );
 
+                    // If this stream belongs to a FEC group, then limit its max_len to the shard_size
+                    // The packet will pad to the shard_size when the stream doesn't have enough data
+                    let max_len =
+                        if !self.fec.is_empty(){
+                            let fec_group = self.fec.get(&0).unwrap();
+                            cmp::min(
+                                fec_group.shard_size - payload_len - 1 - octets::varint_len(stream_id) - 8*2, // estimate the maximum size of the data frame to fit the FEC group size. This estimation will under estimate the capacity of the frame
+                                max_len
+                            )
+                        } else {
+                            max_len
+                        };
+
                     let off = stream.send.off();
 
                     // Try to accurately account for the STREAM frame's overhead,
@@ -2322,14 +2333,14 @@ impl Connection {
                                 temp_m = 20;
                             }
                             temp_n = (temp_m as f32 * solution_redundancy) as u8;
-                            
+
                             debug!("solution check: (temp_m, temp): ({}, {})", temp_m, temp_n);
-        
+
                             if temp_m == 0 || temp_n == 0 {
                                 temp_m = 0;
                                 temp_n = 0;
                             }
-        
+
                             debug!("fec check:{} {} {} {} {}", stream.send.block_size(), stream.send.len, solution_redundancy, temp_m, temp_n);
                         }
                     }
@@ -2337,7 +2348,7 @@ impl Connection {
                     if let Some(tail_threshold) = self.tail_size {
                         // Add redundancy code for the last few blocks if given the number `tail_size` explicitly in app
                         if tail <= tail_threshold {
-                            debug!("set m, n: {}, {}", temp_m, temp_n);
+                            debug!("tail: {}, tail_threshold: {}, set m, n: {}, {}", tail, tail_threshold, temp_m, temp_n);
                             m = temp_m;
                             n = temp_n;
                         }
@@ -2423,7 +2434,12 @@ impl Connection {
         let payload_min_len = if pkt_type == packet::Type::Short &&
             ((m != 0 && n != 0) || !self.fec.is_empty())
         {
-            1301
+            if !self.fec.is_empty() {
+                let fec_group = self.fec.get(&0).unwrap();
+                fec_group.shard_size // pad fec packet according to its fec group
+            } else {
+                1301
+            }
         } else {
             PAYLOAD_MIN_LEN
         };
@@ -3654,7 +3670,7 @@ impl Connection {
                 _ratio
             }
         };
-        
+
         return if ack_ratio > 0 {
             ack_ratio
         } else {
