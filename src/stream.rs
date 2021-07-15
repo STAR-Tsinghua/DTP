@@ -39,10 +39,8 @@ use std::time::{
 
 use crate::Error;
 use crate::Result;
-
 use crate::ranges;
-
-use std::mem;
+use crate::scheduler::{Scheduler, DynScheduler};
 
 const MAX_WRITE_SIZE: usize = 1000;
 
@@ -60,41 +58,6 @@ pub struct Block {
     pub remaining_size: u64,
 }
 
-extern {
-    fn SolutionSelectBlock(
-        blocks: *const Block, block_num: u64, next_packet_id: u64,
-        current_time: u64,
-    ) -> u64;
-
-    fn SolutionShouldDropBlock(block: *const Block, bandwidth: libc::c_double, rtt: libc::c_double, next_packet_id: u64, current_time: u64) -> bool;
-}
-
-/// Schedulor implementation
-///
-/// Decide which block to send next in blocks_vec
-/// 
-/// If defined feature "interface", then use C implementation of select blocks
-///
-/// Or this function implements a basic version of block selection
-pub fn select_block(
-    blocks_vec: &mut Vec<Block>, next_packet_id: u64, current_time: u64,
-) -> u64 {
-    blocks_vec.shrink_to_fit();
-    let blocks = blocks_vec.as_mut_ptr();
-    let block_num = blocks_vec.len() as u64;
-    mem::forget(blocks_vec);
-    return unsafe { SolutionSelectBlock(blocks, block_num, next_packet_id, current_time) };
-}
-
-/// Drop block discriminative function
-///
-/// Decide whether a block should be dropped by the sender
-pub fn should_drop_block(
-    block: &mut Block, 
-    bandwidth: f64, rtt:f64, next_packet_id: u64, current_time: u64
-) -> bool {
-    unsafe { SolutionShouldDropBlock(block, bandwidth, rtt, next_packet_id, current_time) }        
-}
 /// Keeps track of QUIC streams and enforces stream limits.
 #[derive(Default)]
 pub struct StreamMap {
@@ -173,6 +136,8 @@ pub struct StreamMap {
 
     /// min priority of app
     min_priority: Option<u64>,
+
+    scheduler: DynScheduler
 }
 
 impl StreamMap {
@@ -361,6 +326,15 @@ impl StreamMap {
         } else {
             // let mut best_block_id: Option<u64> = None;
             let mut blocks_vec = vec![];
+            let mut peek_blocks_vec = vec![];
+            for i in (0..self.flushable.len()).rev() {
+                let &id = self.flushable.get(i).unwrap();
+                let block = self.get_block(id);
+                peek_blocks_vec.push(block);
+            }
+            
+            self.scheduler.peek_through_flushable(&mut peek_blocks_vec, bandwidth, rtt, next_packet_id, current_time);
+
             for i in (0..self.flushable.len()).rev() {
                 let &id = self.flushable.get(i).unwrap();
                 // check if need to cancel this block
@@ -368,8 +342,8 @@ impl StreamMap {
                 // let passed_time =
                 //     stream.send.start_instant.unwrap().elapsed().as_millis();
                 // create block structure for C++
-                let mut block = self.get_block(id);
-                if should_drop_block(&mut block, bandwidth, rtt, next_packet_id, current_time) {
+                let block = self.get_block(id);
+                if self.scheduler.should_drop_block(&block, bandwidth, rtt, next_packet_id, current_time) {
                     self.cancel_block(id)?;
                     // Block canceled, so non-flushable
                     trace!(
@@ -385,8 +359,10 @@ impl StreamMap {
             if blocks_vec.is_empty() {
                 Ok(None)
             } else {
-                let best_block_id = Some(select_block(
+                let best_block_id = Some(self.scheduler.select_block(
                     &mut blocks_vec,
+                    bandwidth,
+                    rtt,
                     next_packet_id,
                     current_time,
                 ));

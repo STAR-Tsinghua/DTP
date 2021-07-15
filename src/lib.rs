@@ -474,7 +474,7 @@ impl Config {
             init_cwnd: cc::INITIAL_WINDOW as u64,
             init_pacing_rate: u64::max_value(),
             init_data_ack_ratio: 4,
-            init_redundancy_rate: 0f32,
+            init_redundancy_rate: 0.0f32,
         })
     }
 
@@ -1585,10 +1585,11 @@ impl Connection {
                 }
             }
         }
-
+        // Is this packet redundant to FEC ?
         if hdr.fec_info.group_id == 0 ||
             (hdr.fec_info.group_id != 0 && hdr.fec_info.index < hdr.fec_info.m)
         {
+            // If not, then process the frames normally
             while payload.cap() > 0 {
                 let frame = frame::Frame::from_bytes(&mut payload, hdr.ty)?;
 
@@ -1847,7 +1848,6 @@ impl Connection {
         } else {
             cmp::min(self.recovery.cwnd_available(), b.cap())
         };
-
         // Limit data sent by the server based on the amount of data received
         // from the client before its address is validated.
         if !self.verified_peer_address && self.is_server {
@@ -1862,7 +1862,7 @@ impl Connection {
             //.ok_or(Error::Done)?;
             Some(v) => v,
             None => {
-                trace!(
+                debug!(
                     "send:Error::Done:self.pkt_num_spaces[epoch].overhead() None"
                 );
                 return Err(Error::Done);
@@ -1890,7 +1890,7 @@ impl Connection {
         left = match left.checked_sub(b.off() + pn_len + overhead) {
             Some(v) => v,
             None => {
-                trace!("send:Error::Done no enough space for header...overhead:{}   left:{}",b.off() + pn_len + overhead,left);
+                debug!("send:Error::Done no enough space for header...overhead:{}   left:{}",b.off() + pn_len + overhead,left);
                 return Err(Error::Done);
             },
         };
@@ -1902,7 +1902,7 @@ impl Connection {
                 //.ok_or(Error::Done)?;
                 Some(v) => v,
                 None => {
-                    trace!("send:Error::Done: checked_sub(2)");
+                    debug!("send:Error::Done: checked_sub(2)");
                     return Err(Error::Done);
                 },
             };
@@ -1979,7 +1979,6 @@ impl Connection {
                     frames.push(frame);
                 }
             }
-
             // Create ResetStream frame, when canceled miss-deadline blocks
             if self.streams.has_canceled() {
                 for stream_id in self.streams.canceled() {
@@ -2122,13 +2121,14 @@ impl Connection {
                     reason: Vec::new(),
                 };
 
-                if left > frame.wire_len() {
+                if left >= frame.wire_len() {
                     payload_len += frame.wire_len();
                     left -= frame.wire_len();
 
                     frames.push(frame);
 
                     self.challenge = None;
+                    self.draining_timer = Some(now + (self.recovery.pto() * 3));
 
                     ack_eliciting = true;
                     in_flight = true;
@@ -2202,12 +2202,12 @@ impl Connection {
                 left > frame::MAX_STREAM_OVERHEAD &&
                 !is_closing
             {
+                // log network and cc stats
                 let stats = self.stats();
-                let rtt = stats.rtt.as_micros() as f64 / 1000.0;
+                let rtt = stats.rtt.as_millis() as f64;
                 // let bandwidth = stats.cwnd as f64 / rtt; // kb/s or bytes/ms
 
-                let bandwidth =
-                    self.recovery.cc.pacing_rate() as f64 / 8.0 / 1024.0; // bps->KB/s
+                let bandwidth = self.recovery.cc.pacing_rate() as f64 / 8.0 / 1024.0; // bps->KB/s
                 let now_time_ms = match time::SystemTime::now()
                     .duration_since(time::SystemTime::UNIX_EPOCH)
                 {
@@ -2221,17 +2221,21 @@ impl Connection {
                     rtt,
                     self.recovery.cc.bbr_min_rtt().as_millis()
                 );
+
+                // Create a block for each stream
                 while let Some(stream_id) = self.streams.peek_flushable(
                     bandwidth as f64,
                     rtt,
                     pn, // next_packet_id
                     now_time_ms as u64,
                 )? {
+                    let block = self.streams.get_block(stream_id);
                     let stream = match self.streams.get_mut(stream_id) {
                         Some(v) => v,
 
                         None => continue,
                     };
+                    // create block info frame in the first packet of a block
                     if stream.send.is_new() {
                         // Create BlockInfo frame
                         let (block_priority, block_deadline) =
@@ -2243,7 +2247,7 @@ impl Connection {
                             block_deadline,
                             // start_time: stream.send.start_time() as u64,
                             start_time: (stream.send.start_time() as i128 -
-                                self.bct_offset) 
+                                self.bct_offset)
                                 as u64,
                         };
                         if frame.wire_len() <= left {
@@ -2266,6 +2270,19 @@ impl Connection {
                         left,
                         (self.max_tx_data - self.tx_data) as usize,
                     );
+
+                    // If this stream belongs to a FEC group, then limit its max_len to the shard_size
+                    // The packet will pad to the shard_size when the stream doesn't have enough data
+                    let max_len =
+                        if !self.fec.is_empty(){
+                            let fec_group = self.fec.get(&0).unwrap();
+                            cmp::min(
+                                fec_group.shard_size - payload_len - 1 - octets::varint_len(stream_id) - 8*2, // estimate the maximum size of the data frame to fit the FEC group size. This estimation will under estimate the capacity of the frame
+                                max_len
+                            )
+                        } else {
+                            max_len
+                        };
 
                     let off = stream.send.off();
 
@@ -2293,35 +2310,50 @@ impl Connection {
 
                     self.tx_data += stream_buf.len() as u64;
 
+                    // Decide redundancy (the value of `m` and `n`) for blocks which don't have a fec group
                     let mut temp_m = 0;
                     let mut temp_n = 0;
 
                     if self.fec.is_empty() {
-                        let solution_redundancy = Connection::get_redundancy_rate(self.init_redundancy_rate);
-                    
+                        let solution_redundancy = Connection::get_redundancy_rate(
+                            &block,
+                            self.init_redundancy_rate,
+                            rtt,
+                            bandwidth * 1024.0,
+                            now_time_ms as u64,
+                            self.recovery.lost_count,
+                            self.recovery.total_pkt_nums
+                        );
+
+
                         if stream.send.len >= 1{
                             temp_m = ((stream.send.len - 1) / 1350 + 1) as u8;
+                            // ? why do we need to limit the max value of m ?
                             if temp_m >= 20 {
                                 temp_m = 20;
                             }
                             temp_n = (temp_m as f32 * solution_redundancy) as u8;
-                            
-                            debug!("solution check:{} {}", temp_m, temp_n);
-        
+
+                            debug!("solution check: (temp_m, temp): ({}, {})", temp_m, temp_n);
+
                             if temp_m == 0 || temp_n == 0 {
                                 temp_m = 0;
                                 temp_n = 0;
                             }
-        
+
                             debug!("fec check:{} {} {} {} {}", stream.send.block_size(), stream.send.len, solution_redundancy, temp_m, temp_n);
                         }
                     }
-
+                    // Decide whether to enable redundacy code feature
                     if let Some(tail_threshold) = self.tail_size {
+                        // Add redundancy code for the last few blocks if given the number `tail_size` explicitly in app
                         if tail <= tail_threshold {
+                            debug!("tail: {}, tail_threshold: {}, set m, n: {}, {}", tail, tail_threshold, temp_m, temp_n);
                             m = temp_m;
                             n = temp_n;
                         }
+                    } else {
+                        // Disable redundancy code feature at default
                     }
 
                     debug!(
@@ -2402,11 +2434,16 @@ impl Connection {
         let payload_min_len = if pkt_type == packet::Type::Short &&
             ((m != 0 && n != 0) || !self.fec.is_empty())
         {
-            1305
+            if !self.fec.is_empty() {
+                let fec_group = self.fec.get(&0).unwrap();
+                fec_group.shard_size // pad fec packet according to its fec group
+            } else {
+                1301
+            }
         } else {
             PAYLOAD_MIN_LEN
         };
-        // debug!("payload len is {}, min length should be {}", payload_len, payload_min_len);
+        debug!("payload len is {}, min length should be {}", payload_len, payload_min_len);
         if payload_len < payload_min_len {
             let frame = frame::Frame::Padding {
                 len: payload_min_len - payload_len,
@@ -2448,6 +2485,8 @@ impl Connection {
 
         // FEC encoding
         if m != 0 && n != 0 || !self.fec.is_empty() {
+            // Find the corresponding fec group for the current block
+            // or use the given parameter m, n to create one
             let fec_group = match self.fec.entry(0) {
                 hash_map::Entry::Occupied(v) => v.into_mut(),
                 hash_map::Entry::Vacant(v) => {
@@ -2464,7 +2503,7 @@ impl Connection {
             fec_group.info.index = fec_group.next_index;
             fec_group.next_index += 1;
 
-            debug!("info: {:?}, data length: {}", fec_group.info, fec_group.shard_size);
+            debug!("fec group info: {:?}, data length: {}", fec_group.info, fec_group.shard_size);
             debug!("payload_len {}, overhead {}, payload_len - overhead {}", payload_len, overhead, payload_len - overhead);
             let (_, mut payload) = b.split_at(payload_offset)?;
             hdr.fec_info = fec_group.info;
@@ -3554,7 +3593,7 @@ impl Connection {
             },
 
             // can not be fec frame, processed outside of the function.
-            frame::Frame::Fec { .. } => (),
+            frame::Frame::Fec { .. } => error!("FEC shold be unreachable in process_frame"),
         }
 
         Ok(())
@@ -3631,7 +3670,7 @@ impl Connection {
                 _ratio
             }
         };
-        
+
         return if ack_ratio > 0 {
             ack_ratio
         } else {
@@ -3639,7 +3678,9 @@ impl Connection {
         }
     }
 
-    fn get_redundancy_rate(_rate: f32) -> f32 {
+    // rtt: ms
+    // pacing_rate: B/s
+    fn get_redundancy_rate(_block: &stream::Block, _rate: f32, _rtt: f64, _pacing_rate: f64, _current_time: u64, _loss_count: usize, _total_pkt_nums: usize) -> f32 {
         if cfg!(feature = "interface") {
             unsafe { SolutionRedundancy() }
         } else {
@@ -5741,3 +5782,4 @@ mod ranges;
 mod recovery;
 mod stream;
 mod tls;
+mod scheduler;
