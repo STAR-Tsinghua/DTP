@@ -680,6 +680,7 @@ impl Connection {
         Ok(header_block)
     }
 
+    //改成接到stream_send_full，加上deadline
     fn send_headers(
         &mut self, conn: &mut super::Connection, stream_id: u64,
         headers: &[Header], fin: bool,
@@ -702,18 +703,31 @@ impl Connection {
             fin
         );
 
-        conn.stream_send(
+        conn.stream_send_full(
             stream_id,
             b.put_varint(frame::HEADERS_FRAME_TYPE_ID)?,
             false,
+            stream::MAX_DEADLINE,
+            stream::DEFAULT_PRIORITY,
+            stream_id,
         )?;
 
-        conn.stream_send(
+        conn.stream_send_full(
             stream_id,
             b.put_varint(header_block.len() as u64)?,
             false,
+            stream::MAX_DEADLINE,
+            stream::DEFAULT_PRIORITY,
+            stream_id,
         )?;
-        conn.stream_send(stream_id, &header_block, fin)?;
+        conn.stream_send_full(
+            stream_id,
+             &header_block, 
+             fin,
+             stream::MAX_DEADLINE,
+             stream::DEFAULT_PRIORITY,
+             stream_id,
+            )?;
 
         if fin && conn.stream_finished(stream_id) {
             self.streams.remove(&stream_id);
@@ -764,13 +778,24 @@ impl Connection {
             fin
         );
 
-        conn.stream_send(
+        //改成接到stream_send_full，加上deadline
+        conn.stream_send_full(
             stream_id,
             b.put_varint(frame::DATA_FRAME_TYPE_ID)?,
             false,
+            stream::MAX_DEADLINE,
+            stream::DEFAULT_PRIORITY,
+            stream_id,
         )?;
 
-        conn.stream_send(stream_id, b.put_varint(body_len as u64)?, false)?;
+        conn.stream_send_full(
+            stream_id, 
+            b.put_varint(body_len as u64)?,
+             false,
+             stream::MAX_DEADLINE,
+             stream::DEFAULT_PRIORITY,
+             stream_id,
+            )?;
 
         // Return how many bytes were written, excluding the frame header.
         let written = conn.stream_send(stream_id, &body[..body_len], fin)?;
