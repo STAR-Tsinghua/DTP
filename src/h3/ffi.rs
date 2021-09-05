@@ -173,11 +173,11 @@ pub struct Header {
 #[no_mangle]
 pub extern fn quiche_h3_send_request(
     conn: &mut h3::Connection, quic_conn: &mut Connection,
-    headers: *const Header, headers_len: size_t, fin: bool,
+    headers: *const Header, headers_len: size_t, fin: bool,deadline:u64
 ) -> i64 {
     let req_headers = headers_from_ptr(headers, headers_len);
 
-    match conn.send_request(quic_conn, &req_headers, fin) {
+    match conn.send_request(quic_conn, &req_headers, fin,deadline) {
         Ok(v) => v as i64,
 
         Err(e) => e.to_c() as i64,
@@ -187,11 +187,11 @@ pub extern fn quiche_h3_send_request(
 #[no_mangle]
 pub extern fn quiche_h3_send_response(
     conn: &mut h3::Connection, quic_conn: &mut Connection, stream_id: u64,
-    headers: *const Header, headers_len: size_t, fin: bool,
+    headers: *const Header, headers_len: size_t, fin: bool,deadline:u64
 ) -> c_int {
     let resp_headers = headers_from_ptr(headers, headers_len);
 
-    match conn.send_response(quic_conn, stream_id, &resp_headers, fin) {
+    match conn.send_response(quic_conn, stream_id, &resp_headers, fin,deadline) {
         Ok(_) => 0,
 
         Err(e) => e.to_c() as c_int,
@@ -201,7 +201,7 @@ pub extern fn quiche_h3_send_response(
 #[no_mangle]
 pub extern fn quiche_h3_send_body(
     conn: &mut h3::Connection, quic_conn: &mut Connection, stream_id: u64,
-    body: *const u8, body_len: size_t, fin: bool,
+    body: *const u8, body_len: size_t, fin: bool,deadline:u64
 ) -> ssize_t {
     if body_len > <ssize_t>::max_value() as usize {
         panic!("The provided buffer is too large");
@@ -209,7 +209,7 @@ pub extern fn quiche_h3_send_body(
 
     let body = unsafe { slice::from_raw_parts(body, body_len) };
 
-    match conn.send_body(quic_conn, stream_id, body, fin) {
+    match conn.send_body(quic_conn, stream_id, body, fin,deadline) {
         Ok(v) => v as ssize_t,
 
         Err(e) => e.to_c(),

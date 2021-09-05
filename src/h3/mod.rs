@@ -643,13 +643,13 @@ impl Connection {
     ///
     /// On success the newly allocated stream ID is returned.
     pub fn send_request(
-        &mut self, conn: &mut super::Connection, headers: &[Header], fin: bool,
+        &mut self, conn: &mut super::Connection, headers: &[Header], fin: bool,deadline:u64
     ) -> Result<u64> {
         let stream_id = self.get_available_request_stream()?;
         self.streams
             .insert(stream_id, stream::Stream::new(stream_id, true));
 
-        self.send_headers(conn, stream_id, headers, fin)?;
+        self.send_headers(conn, stream_id, headers, fin,deadline)?;
 
         Ok(stream_id)
     }
@@ -657,9 +657,9 @@ impl Connection {
     /// Sends an HTTP/3 response on the specified stream.
     pub fn send_response(
         &mut self, conn: &mut super::Connection, stream_id: u64,
-        headers: &[Header], fin: bool,
+        headers: &[Header], fin: bool,deadline:u64
     ) -> Result<()> {
-        self.send_headers(conn, stream_id, headers, fin)?;
+        self.send_headers(conn, stream_id, headers, fin,deadline)?;
 
         Ok(())
     }
@@ -682,7 +682,7 @@ impl Connection {
 
     fn send_headers(
         &mut self, conn: &mut super::Connection, stream_id: u64,
-        headers: &[Header], fin: bool,
+        headers: &[Header], fin: bool,deadline:u64
     ) -> Result<()> {
         let mut d = [42; 10];
         let mut b = octets::Octets::with_slice(&mut d);
@@ -702,18 +702,31 @@ impl Connection {
             fin
         );
 
-        conn.stream_send(
+        conn.stream_send_full(
             stream_id,
             b.put_varint(frame::HEADERS_FRAME_TYPE_ID)?,
             false,
+            deadline,
+            super::stream::DEFAULT_PRIORITY,
+            stream_id,
         )?;
 
-        conn.stream_send(
+        conn.stream_send_full(
             stream_id,
             b.put_varint(header_block.len() as u64)?,
             false,
+            deadline,
+            super::stream::DEFAULT_PRIORITY,
+            stream_id,
         )?;
-        conn.stream_send(stream_id, &header_block, fin)?;
+        conn.stream_send_full(
+            stream_id,
+            &header_block,
+            fin,
+            deadline,
+            super::stream::DEFAULT_PRIORITY,
+            stream_id,
+        )?;
 
         if fin && conn.stream_finished(stream_id) {
             self.streams.remove(&stream_id);
@@ -727,7 +740,7 @@ impl Connection {
     /// On success the number of bytes written is returned.
     pub fn send_body(
         &mut self, conn: &mut super::Connection, stream_id: u64, body: &[u8],
-        fin: bool,
+        fin: bool,deadline:u64
     ) -> Result<usize> {
         let mut d = [42; 10];
         let mut b = octets::Octets::with_slice(&mut d);
@@ -764,16 +777,33 @@ impl Connection {
             fin
         );
 
-        conn.stream_send(
+        conn.stream_send_full(
             stream_id,
             b.put_varint(frame::DATA_FRAME_TYPE_ID)?,
             false,
+            deadline,
+            super::stream::DEFAULT_PRIORITY,
+            stream_id
         )?;
 
-        conn.stream_send(stream_id, b.put_varint(body_len as u64)?, false)?;
+        conn.stream_send_full(
+            stream_id,
+             b.put_varint(body_len as u64)?,
+            false,
+            deadline,
+            super::stream::DEFAULT_PRIORITY,
+            stream_id
+        )?;
 
         // Return how many bytes were written, excluding the frame header.
-        let written = conn.stream_send(stream_id, &body[..body_len], fin)?;
+        let written = conn.stream_send_full(
+            stream_id,
+            &body[..body_len],
+            fin,
+            deadline,
+            super::stream::DEFAULT_PRIORITY,
+            stream_id
+        )?;
 
         if fin && written == body.len() && conn.stream_finished(stream_id) {
             self.streams.remove(&stream_id);
@@ -1626,7 +1656,7 @@ pub mod testing {
             ];
 
             let stream =
-                self.client.send_request(&mut self.pipe.client, &req, fin)?;
+                self.client.send_request(&mut self.pipe.client, &req, fin,200)?;
 
             self.advance().ok();
 
@@ -1649,6 +1679,7 @@ pub mod testing {
                 stream,
                 &resp,
                 fin,
+                200,
             )?;
 
             self.advance().ok();
@@ -1665,7 +1696,7 @@ pub mod testing {
             let bytes = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
             self.client
-                .send_body(&mut self.pipe.client, stream, &bytes, fin)?;
+                .send_body(&mut self.pipe.client, stream, &bytes, fin,200)?;
 
             self.advance().ok();
 
@@ -1690,7 +1721,7 @@ pub mod testing {
             let bytes = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
             self.server
-                .send_body(&mut self.pipe.server, stream, &bytes, fin)?;
+                .send_body(&mut self.pipe.server, stream, &bytes, fin,200)?;
 
             self.advance().ok();
 
@@ -2520,7 +2551,7 @@ mod tests {
         for _ in 0..total_data_frames {
             assert_eq!(
                 s.client
-                    .send_body(&mut s.pipe.client, stream, &bytes, false),
+                    .send_body(&mut s.pipe.client, stream, &bytes, false,200),
                 Ok(bytes.len())
             );
 
@@ -2528,7 +2559,7 @@ mod tests {
         }
 
         assert_eq!(
-            s.client.send_body(&mut s.pipe.client, stream, &bytes, true),
+            s.client.send_body(&mut s.pipe.client, stream, &bytes, true,200),
             Ok(bytes.len() - 2)
         );
 
@@ -2598,7 +2629,7 @@ mod tests {
 
         let stream = s
             .client
-            .send_request(&mut s.pipe.client, &req, true)
+            .send_request(&mut s.pipe.client, &req, true,200)
             .unwrap();
 
         s.advance().ok();
@@ -2626,20 +2657,20 @@ mod tests {
         // Session::send_request() method because it also calls advance(),
         // otherwise the server would send a MAX_STREAMS frame and the client
         // wouldn't hit the streams limit.
-        assert_eq!(s.client.send_request(&mut s.pipe.client, &req, true), Ok(0));
-        assert_eq!(s.client.send_request(&mut s.pipe.client, &req, true), Ok(4));
-        assert_eq!(s.client.send_request(&mut s.pipe.client, &req, true), Ok(8));
+        assert_eq!(s.client.send_request(&mut s.pipe.client, &req, true,200), Ok(0));
+        assert_eq!(s.client.send_request(&mut s.pipe.client, &req, true,200), Ok(4));
+        assert_eq!(s.client.send_request(&mut s.pipe.client, &req, true,200), Ok(8));
         assert_eq!(
-            s.client.send_request(&mut s.pipe.client, &req, true),
+            s.client.send_request(&mut s.pipe.client, &req, true,200),
             Ok(12)
         );
         assert_eq!(
-            s.client.send_request(&mut s.pipe.client, &req, true),
+            s.client.send_request(&mut s.pipe.client, &req, true,200),
             Ok(16)
         );
 
         assert_eq!(
-            s.client.send_request(&mut s.pipe.client, &req, true),
+            s.client.send_request(&mut s.pipe.client, &req, true,200),
             Err(Error::TransportError(crate::Error::StreamLimit))
         );
     }
