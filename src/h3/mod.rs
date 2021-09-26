@@ -645,21 +645,29 @@ impl Connection {
     pub fn send_request(
         &mut self, conn: &mut super::Connection, headers: &[Header], fin: bool,
     ) -> Result<u64> {
+        self.send_request_full(conn, headers, fin, 200)
+    }
+
+    pub fn send_request_full(
+        &mut self, conn: &mut super::Connection, headers: &[Header], fin: bool,
+        deadline: u64,
+    ) -> Result<u64> {
         let stream_id = self.get_available_request_stream()?;
         self.streams
             .insert(stream_id, stream::Stream::new(stream_id, true));
 
-        self.send_headers(conn, stream_id, headers, fin)?;
-
+        self.send_headers(conn, stream_id, headers, fin, deadline)?;
+        /// deadline
         Ok(stream_id)
     }
+
 
     /// Sends an HTTP/3 response on the specified stream.
     pub fn send_response(
         &mut self, conn: &mut super::Connection, stream_id: u64,
-        headers: &[Header], fin: bool,
+        headers: &[Header], fin: bool,deadline: u64,
     ) -> Result<()> {
-        self.send_headers(conn, stream_id, headers, fin)?;
+        self.send_headers(conn, stream_id, headers, fin,deadline)?;
 
         Ok(())
     }
@@ -682,7 +690,7 @@ impl Connection {
 
     fn send_headers(
         &mut self, conn: &mut super::Connection, stream_id: u64,
-        headers: &[Header], fin: bool,
+        headers: &[Header], fin: bool,deadline: u64,
     ) -> Result<()> {
         let mut d = [42; 10];
         let mut b = octets::Octets::with_slice(&mut d);
@@ -702,18 +710,32 @@ impl Connection {
             fin
         );
 
-        conn.stream_send(
+        conn.stream_send_full(
             stream_id,
             b.put_varint(frame::HEADERS_FRAME_TYPE_ID)?,
             false,
+            deadline,
+            super::stream::DEFAULT_PRIORITY,
+            stream_id,
         )?;
 
-        conn.stream_send(
+        conn.stream_send_full(
             stream_id,
             b.put_varint(header_block.len() as u64)?,
             false,
+            deadline,
+            super::stream::DEFAULT_PRIORITY,
+            stream_id,
         )?;
-        conn.stream_send(stream_id, &header_block, fin)?;
+        conn.stream_send_full(
+            stream_id,
+            &header_block,
+            fin,
+            deadline,
+            super::stream::DEFAULT_PRIORITY,
+            stream_id,
+        )?;
+
 
         if fin && conn.stream_finished(stream_id) {
             self.streams.remove(&stream_id);
@@ -728,6 +750,13 @@ impl Connection {
     pub fn send_body(
         &mut self, conn: &mut super::Connection, stream_id: u64, body: &[u8],
         fin: bool,
+    ) -> Result<usize> {
+        self.send_body_full(conn, stream_id, body, fin, 200)
+    }
+
+    pub fn send_body_full(
+        &mut self, conn: &mut super::Connection, stream_id: u64, body: &[u8],
+        fin: bool, deadline: u64,
     ) -> Result<usize> {
         let mut d = [42; 10];
         let mut b = octets::Octets::with_slice(&mut d);
@@ -764,16 +793,33 @@ impl Connection {
             fin
         );
 
-        conn.stream_send(
+        conn.stream_send_full(
             stream_id,
             b.put_varint(frame::DATA_FRAME_TYPE_ID)?,
             false,
+            deadline,
+            super::stream::DEFAULT_PRIORITY,
+            stream_id,
         )?;
 
-        conn.stream_send(stream_id, b.put_varint(body_len as u64)?, false)?;
+        conn.stream_send_full(
+            stream_id,
+            b.put_varint(body_len as u64)?,
+            false,
+            deadline,
+            super::stream::DEFAULT_PRIORITY,
+            stream_id,
+        )?;
 
         // Return how many bytes were written, excluding the frame header.
-        let written = conn.stream_send(stream_id, &body[..body_len], fin)?;
+        let written = conn.stream_send_full(
+            stream_id,
+            &body[..body_len],
+            fin,
+            deadline,
+            super::stream::DEFAULT_PRIORITY,
+            stream_id,
+        )?;
 
         if fin && written == body.len() && conn.stream_finished(stream_id) {
             self.streams.remove(&stream_id);
@@ -1649,6 +1695,7 @@ pub mod testing {
                 stream,
                 &resp,
                 fin,
+                200,
             )?;
 
             self.advance().ok();
