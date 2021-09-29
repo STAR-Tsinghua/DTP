@@ -24,14 +24,18 @@
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-use std::ptr;
-use std::slice;
-use std::str;
+use std::{
+    ptr,
+    slice,
+    str,
+};
 
-use libc::c_int;
-use libc::c_void;
-use libc::size_t;
-use libc::ssize_t;
+use libc::{
+    c_int,
+    c_void,
+    size_t,
+    ssize_t,
+};
 
 use crate::*;
 
@@ -202,11 +206,31 @@ pub extern fn quiche_h3_send_request_full(
 #[no_mangle]
 pub extern fn quiche_h3_send_response(
     conn: &mut h3::Connection, quic_conn: &mut Connection, stream_id: u64,
-    headers: *const Header, headers_len: size_t, fin: bool,deadline: u64,
+    headers: *const Header, headers_len: size_t, fin: bool,
 ) -> c_int {
     let resp_headers = headers_from_ptr(headers, headers_len);
 
-    match conn.send_response(quic_conn, stream_id, &resp_headers, fin,deadline) {
+    match conn.send_response(quic_conn, stream_id, &resp_headers, fin) {
+        Ok(_) => 0,
+
+        Err(e) => e.to_c() as c_int,
+    }
+}
+
+#[no_mangle]
+pub extern fn quiche_h3_send_response_full(
+    conn: &mut h3::Connection, quic_conn: &mut Connection, stream_id: u64,
+    headers: *const Header, headers_len: size_t, fin: bool, deadline: u64,
+) -> c_int {
+    let resp_headers = headers_from_ptr(headers, headers_len);
+
+    match conn.send_response_full(
+        quic_conn,
+        stream_id,
+        &resp_headers,
+        fin,
+        deadline,
+    ) {
         Ok(_) => 0,
 
         Err(e) => e.to_c() as c_int,

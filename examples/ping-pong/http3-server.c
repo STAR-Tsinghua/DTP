@@ -397,11 +397,11 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
                             },
                         };
 
-                        quiche_h3_send_response(conn_io->http3, conn_io->conn,
-                                                s, headers, 3, true,200);
+                        quiche_h3_send_response_full(conn_io->http3, conn_io->conn,
+                                                s, headers, 3, true, 200);
 
                         quiche_h3_send_body_full(conn_io->http3, conn_io->conn,
-                                            s, (uint8_t *) "byez\n", 5, true,200);
+                                            s, (uint8_t *) "byez\n", 5, true, 200);
                         break;
                     }
 

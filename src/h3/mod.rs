@@ -246,8 +246,10 @@
 //! [`send_response()`]: struct.Connection.html#method.send_response
 //! [`send_body()`]: struct.Connection.html#method.send_body
 
-use std::collections::HashMap;
-use std::collections::VecDeque;
+use std::collections::{
+    HashMap,
+    VecDeque,
+};
 
 use crate::octets;
 
@@ -661,13 +663,19 @@ impl Connection {
         Ok(stream_id)
     }
 
-
     /// Sends an HTTP/3 response on the specified stream.
     pub fn send_response(
         &mut self, conn: &mut super::Connection, stream_id: u64,
-        headers: &[Header], fin: bool,deadline: u64,
+        headers: &[Header], fin: bool,
     ) -> Result<()> {
-        self.send_headers(conn, stream_id, headers, fin,deadline)?;
+        self.send_response_full(conn, stream_id, headers, fin, 200)
+    }
+
+    pub fn send_response_full(
+        &mut self, conn: &mut super::Connection, stream_id: u64,
+        headers: &[Header], fin: bool, deadline: u64,
+    ) -> Result<()> {
+        self.send_headers(conn, stream_id, headers, fin, deadline)?;
 
         Ok(())
     }
@@ -690,7 +698,7 @@ impl Connection {
 
     fn send_headers(
         &mut self, conn: &mut super::Connection, stream_id: u64,
-        headers: &[Header], fin: bool,deadline: u64,
+        headers: &[Header], fin: bool, deadline: u64,
     ) -> Result<()> {
         let mut d = [42; 10];
         let mut b = octets::Octets::with_slice(&mut d);
@@ -735,7 +743,6 @@ impl Connection {
             super::stream::DEFAULT_PRIORITY,
             stream_id,
         )?;
-
 
         if fin && conn.stream_finished(stream_id) {
             self.streams.remove(&stream_id);
@@ -1695,7 +1702,6 @@ pub mod testing {
                 stream,
                 &resp,
                 fin,
-                200,
             )?;
 
             self.advance().ok();

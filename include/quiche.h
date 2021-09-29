@@ -436,6 +436,7 @@ typedef struct {
 int64_t quiche_h3_send_request(quiche_h3_conn *conn, quiche_conn *quic_conn,
                                quiche_h3_header *headers, size_t headers_len,
                                bool fin);
+
 //Increase deadline in sends_request .
 int64_t quiche_h3_send_request_full(quiche_h3_conn *conn, quiche_conn *quic_conn,
                                quiche_h3_header *headers, size_t headers_len,
@@ -444,7 +445,12 @@ int64_t quiche_h3_send_request_full(quiche_h3_conn *conn, quiche_conn *quic_conn
 // Sends an HTTP/3 response on the specified stream.
 int quiche_h3_send_response(quiche_h3_conn *conn, quiche_conn *quic_conn,
                             uint64_t stream_id, quiche_h3_header *headers,
-                            size_t headers_len, bool fin,int deadline);
+                            size_t headers_len, bool fin);
+
+//Increase deadline in send_response .
+int quiche_h3_send_response_full(quiche_h3_conn *conn, quiche_conn *quic_conn,
+                            uint64_t stream_id, quiche_h3_header *headers,
+                            size_t headers_len, bool fin, int deadline)
 
 // Sends an HTTP/3 body chunk on the given stream.
 ssize_t quiche_h3_send_body(quiche_h3_conn *conn, quiche_conn *quic_conn,
@@ -454,7 +460,7 @@ ssize_t quiche_h3_send_body(quiche_h3_conn *conn, quiche_conn *quic_conn,
 //Increase deadline in send_body
 ssize_t quiche_h3_send_body_full(quiche_h3_conn *conn, quiche_conn *quic_conn,
                             uint64_t stream_id, uint8_t *body, size_t body_len,
-                            bool fin,int deadline);
+                            bool fin, int deadline);
 
 // Reads request or response body data into the provided buffer.
 ssize_t quiche_h3_recv_body(quiche_h3_conn *conn, quiche_conn *quic_conn,
