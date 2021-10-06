@@ -51,7 +51,7 @@
 #define MAX_BLOCK_SIZE 10000000  // QUIC
 #define TIME_SIZE 8
 // #define SEND_INTERVAL 0.03
-// #define MAX_SEND_TIMES 600
+/* #define MAX_SEND_TIMES 600 */
 // #define MAX_FLUSH_TIMES 3
 
 int MAX_SEND_TIMES;
@@ -931,6 +931,34 @@ static void timeout_cb(EV_P_ ev_timer *w, int revents) {
     }
 }
 
+int exit_addr(struct addrinfo* local) {
+  freeaddrinfo(local);
+  return -1;
+}
+
+int exit_sock(struct addrinfo* local, int sock) {
+  close(sock);
+  freeaddrinfo(local);
+  return -1;
+}
+
+
+int exit_config(struct addrinfo* local, int sock, quiche_config* conf) {
+  quiche_config_free(config);
+  close(sock);
+  freeaddrinfo(local);
+  return -1;
+}
+
+int exit_all(struct addrinfo *local, int sock, quiche_config *conf,
+             struct dtp_config *cfgs) {
+  free(cfgs);
+  quiche_config_free(config);
+  close(sock);
+  freeaddrinfo(local);
+  return -1;
+}
+
 int main(int argc, char *argv[]) {
     const char *host = argv[1];
     const char *port = argv[2];
@@ -946,7 +974,7 @@ int main(int argc, char *argv[]) {
                                    .ai_socktype = SOCK_DGRAM,
                                    .ai_protocol = IPPROTO_UDP};
 
-    quiche_enable_debug_logging(debug_log, NULL);
+    /* quiche_enable_debug_logging(debug_log, NULL); */
 
     struct addrinfo *local;
     if (getaddrinfo(host, port, &hints, &local) != 0) {
@@ -957,23 +985,23 @@ int main(int argc, char *argv[]) {
     int sock = socket(local->ai_family, SOCK_DGRAM, 0);
     if (sock < 0) {
         perror("failed to create socket");
-        return -1;
+        return exit_addr(local);
     }
 
     if (fcntl(sock, F_SETFL, O_NONBLOCK) != 0) {
         perror("failed to make socket non-blocking");
-        return -1;
+        return exit_sock(local, sock);
     }
 
     if (bind(sock, local->ai_addr, local->ai_addrlen) < 0) {
         perror("failed to connect socket");
-        return -1;
+        return exit_sock(local, sock);
     }
 
     config = quiche_config_new(QUICHE_PROTOCOL_VERSION);
     if (config == NULL) {
         fprintf(stderr, "failed to create config\n");
-        return -1;
+        return exit_sock(local, sock);
     }
 
     quiche_config_load_cert_chain_from_pem_file(config, "./cert.crt");
@@ -996,9 +1024,12 @@ int main(int argc, char *argv[]) {
     int cfgs_len;
     struct dtp_config *cfgs = NULL;
     cfgs = parse_dtp_config(dtp_cfg_fname, &cfgs_len, &MAX_SEND_TIMES);
-    if (cfgs_len <= 0) {
-        fprintf(stderr, "No valid DTP configuration\n");
-        return -1;
+    if (cfgs == NULL) {
+      fprintf(stderr, "No valid DTP configuration\n");
+      return exit_config(local, sock, config);
+    } else if(cfgs_len == 0) {
+      fprintf(stderr, "Zero length DTP configuration\n");
+      return exit_all(local, sock, config, cfgs);
     }
 
     struct connections c;
@@ -1020,9 +1051,7 @@ int main(int argc, char *argv[]) {
 
     ev_loop(loop, 0);
 
-    freeaddrinfo(local);
-
-    quiche_config_free(config);
+    exit_all(local, sock, config, cfgs);
 
     return 0;
 }

@@ -550,7 +550,7 @@ int main(int argc, char *argv[]) {
                                    .ai_socktype = SOCK_DGRAM,
                                    .ai_protocol = IPPROTO_UDP};
 
-    quiche_enable_debug_logging(debug_log, NULL);
+    /* quiche_enable_debug_logging(debug_log, NULL); */
 
     struct addrinfo *peer;
     if (getaddrinfo(host, port, &hints, &peer) != 0) {
