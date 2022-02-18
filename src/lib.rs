@@ -282,6 +282,7 @@ extern {
 }
 
 pub use crate::cc::Algorithm as CongestionControlAlgorithm;
+pub use crate::scheduler::SchedulerType;
 
 /// The current QUIC wire version.
 pub const PROTOCOL_VERSION: u32 = PROTOCOL_VERSION_DRAFT25;
@@ -366,6 +367,9 @@ pub enum Error {
 
     /// Error in congestion control.
     CongestionControl  = -14,
+
+    /// Error in scheduler type
+    SchedulerType      = -15,
 }
 
 impl Error {
@@ -449,6 +453,10 @@ pub struct Config {
     /// The ratio of n : m
     /// Example: rate = 0.2, m = 20 => n = 4
     init_redundancy_rate: f32,
+
+    /// Type of the scheduler
+    /// default: scheduler::SchedulerType::Dynamic
+    scheduler_type: scheduler::SchedulerType,
 }
 
 impl Config {
@@ -475,6 +483,7 @@ impl Config {
             init_pacing_rate: u64::max_value(),
             init_data_ack_ratio: 4,
             init_redundancy_rate: 0.0f32,
+            scheduler_type: SchedulerType::Dynamic, // default scheduler
         })
     }
 
@@ -709,6 +718,7 @@ impl Config {
     /// config.set_cc_algorithm_name("reno");
     /// # Ok::<(), quiche::Error>(())
     /// ```
+    /// TODO untested, may interct incorrectly with cc_trigger
     pub fn set_cc_algorithm_name(&mut self, name: &str) -> Result<()> {
         self.cc_algorithm = CongestionControlAlgorithm::from_str(name)?;
 
@@ -738,6 +748,25 @@ impl Config {
         unsafe {
             SolutionInit(&mut self.init_cwnd, &mut self.init_pacing_rate)
         };
+    }
+
+    /// Set the type of stream scheduler by its name
+    /// 
+    /// Current Available: 
+    /// "Basic", "basic" for basic FIFO scheduler
+    /// "DTP", "Dtp", "dtp" for DTP scheduler
+    /// "C", "c" for C scheduler
+    /// "Dynamic", "dynamic", "dyn", "Dyn" for Dynamic scheduler
+    pub fn set_scheduler_by_name(&mut self, name: &str) -> Result<()> {
+        self.scheduler_type = SchedulerType::from_str(name)?;
+
+        Ok(())
+    }
+    /// Set the type of stream scheduler
+    /// 
+    /// The default value is `quiche::SchedulerType::Dynamic`
+    pub fn set_scheduler_type(&mut self, sche: SchedulerType) {
+        self.scheduler_type = sche;
     }
 
     /// Sets the ratio of data packets and ack frames
@@ -1120,6 +1149,7 @@ impl Connection {
             streams: stream::StreamMap::new(
                 config.local_transport_params.initial_max_streams_bidi,
                 config.local_transport_params.initial_max_streams_uni,
+                config
             ),
 
             odcid: None,

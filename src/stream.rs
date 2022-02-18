@@ -37,10 +37,12 @@ use std::time::{
     SystemTime,
 };
 
+use crate::Config;
 use crate::Error;
 use crate::Result;
 use crate::ranges;
 use crate::scheduler::{Scheduler, DynScheduler};
+use crate::scheduler;
 
 const MAX_WRITE_SIZE: usize = 1000;
 
@@ -137,17 +139,19 @@ pub struct StreamMap {
     /// min priority of app
     min_priority: Option<u64>,
 
-    scheduler: DynScheduler
+    scheduler: DynScheduler,
 }
 
 impl StreamMap {
-    pub fn new(max_streams_bidi: u64, max_streams_uni: u64) -> StreamMap {
+    pub fn new(max_streams_bidi: u64, max_streams_uni: u64, config: &Config) -> StreamMap {
         StreamMap {
             local_max_streams_bidi: max_streams_bidi,
             local_max_streams_bidi_next: max_streams_bidi,
 
             local_max_streams_uni: max_streams_uni,
             local_max_streams_uni_next: max_streams_uni,
+
+            scheduler: DynScheduler::init(config.scheduler_type),
 
             ..StreamMap::default()
         }

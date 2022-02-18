@@ -1,4 +1,35 @@
+use std::str::FromStr;
+
 use crate::stream::Block;
+
+/// Available scheduler types
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum SchedulerType {
+    /// Basic FIFO scheduler
+    Basic   = 0,
+    /// Scheduler introduced by DTP
+    DTP     = 1,
+    /// Implement C scheduler using interface function
+    /// `SolutionSelectBlock` and `SolutionShouldDropBlock` 
+    C       = 2,
+    /// Dynamic scheduler change with Rust feature
+    Dynamic = 3,
+}
+
+impl FromStr for SchedulerType {
+    type Err = crate::Error;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        match name {
+            "Basic" | "basic" => Ok(SchedulerType::Basic),
+            "DTP" | "Dtp" | "dtp" => Ok(SchedulerType::DTP),
+            "C" | "c" => Ok(SchedulerType::C),
+            "Dynamic" | "dynamic" | "Dyn" | "dyn" => Ok(SchedulerType::Dynamic),
+            _ => Err(crate::Error::SchedulerType)
+        }
+    }
+}
 
 pub trait Scheduler {
     fn new() -> Self
@@ -33,6 +64,24 @@ pub trait Scheduler {
         _next_packet_id: u64, _current_time: u64
     ) {
         () // do nothing
+    }
+}
+
+/// Instantiate a scheduler implementation basing on the given SchedulerType
+pub fn new_scheduler(sche: SchedulerType) -> Box<dyn Scheduler> {
+    eprintln!("Creating scheduler: {:?}", sche);
+    match sche {
+        SchedulerType::Basic =>
+            Box::new(BasicScheduler::new()),
+        SchedulerType::DTP => Box::new(dtp_scheduler::DtpScheduler::new()),
+        SchedulerType::C=>
+            Box::new(c_scheduler::CScheduler::new()),
+        SchedulerType::Dynamic=>
+            Box::new(DynScheduler::new()),
+        _ => {
+            warn!("Invalid scheduler type! Change to default scheduler");
+            Box::new(DynScheduler::new())
+        }
     }
 }
 
@@ -83,7 +132,13 @@ impl Default for DynScheduler {
             DynScheduler { 
                 scheduler: Box::new(c_scheduler::CScheduler::new())
             }
-        } else {
+        } 
+        else if cfg!(feature = "basic-scheduler") {
+            DynScheduler {
+                scheduler: Box::new(BasicScheduler::new())
+            }
+        }
+        else {
             DynScheduler {
                 scheduler: Box::new(dtp_scheduler::DtpScheduler::new())
             }
@@ -121,6 +176,17 @@ impl Scheduler for DynScheduler {
         next_packet_id: u64, current_time: u64
     ) {
         self.scheduler.peek_through_flushable(blocks_vec, pacing_rate, rtt, next_packet_id, current_time)
+    }
+}
+
+impl DynScheduler {
+    pub fn init(stype: SchedulerType) -> Self {
+        let mut dyn_scheduler: DynScheduler = Default::default();
+        if stype != SchedulerType::Dynamic {
+            dyn_scheduler.scheduler = new_scheduler(stype);
+        }
+        eprintln!("Finish creating dyn scheduler");
+        return dyn_scheduler;
     }
 }
 

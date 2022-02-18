@@ -231,6 +231,25 @@ pub extern fn quiche_config_set_cc_algorithm(
     config.set_cc_algorithm(algo);
 }
 
+#[no_mangle]
+pub extern fn quiche_config_set_scheduler_name(
+    config: &mut Config, name: *const c_char,
+) -> c_int {
+    let name = unsafe { ffi::CStr::from_ptr(name).to_str().unwrap() };
+    match config.set_scheduler_by_name(name) {
+        Ok(_) => 0,
+
+        Err(e) => e.to_c() as c_int,
+    }
+}
+
+#[no_mangle]
+pub extern fn quiche_config_set_scheduler_type(
+    config: &mut Config, sche: scheduler::SchedulerType,
+) {
+    config.set_scheduler_type(sche);
+}
+
 // update by mc
 #[no_mangle]
 pub extern fn quiche_config_set_data_ack_ratio(

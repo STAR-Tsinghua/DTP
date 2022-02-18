@@ -173,6 +173,25 @@ enum quiche_cc_algorithm {
 
 // Sets the congestion control algorithm used.
 void quiche_config_set_cc_algorithm(quiche_config *config, enum quiche_cc_algorithm algo);
+// TODO: void quiche_config_set_cc_algorithm_name(quiche_config *config, const char* name);
+
+enum quiche_scheduler_type {
+    SCHE_BASIC = 0,
+    SCHE_DTP   = 1,
+    SCHE_C     = 2,
+    SCHE_DYN   = 3
+};
+// Set the scheduler type
+void quiche_config_set_scheduler_type(quiche_config *config);
+
+// Set the scheduler type by its name
+// 
+// Current Available: 
+// "Basic", "basic" for basic FIFO scheduler
+// "DTP", "Dtp", "dtp" for DTP scheduler
+// "C", "c" for C scheduler
+// "Dynamic", "dynamic", "dyn", "Dyn" for Dynamic scheduler
+void quiche_config_set_scheduler_name(quiche_config *config, const char* name);
 
 // Sets the data ack ratios
 void quiche_config_set_data_ack_ratio(quiche_config *config, uint64_t ratio);
