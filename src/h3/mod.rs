@@ -659,7 +659,7 @@ impl Connection {
             .insert(stream_id, stream::Stream::new(stream_id, true));
 
         self.send_headers(conn, stream_id, headers, fin, deadline)?;
-        /// deadline
+        // deadline
         Ok(stream_id)
     }
 
