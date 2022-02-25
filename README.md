@@ -178,10 +178,13 @@ C API 和 Rust API 的设计相同，只是处理了 C 语言自身的一些限�
 4. go: 1.10.4 linux/amd64
 5. cmake: 3.10.2
 6. perl: v5.26.1
+7. gcc: 9.3.0
 
 ### 语言依赖
 
-DTP 需要使用 Rust 和 Go 两个语言环境来完成编译过程。我们提供了一个 Debian:buster 版本的可用于编译的镜像：`simonkorl0228/aitrans_build`可供使用。
+DTP 需要使用 Rust 和 Go 两个语言环境来完成编译过程。我们提供了一个 Debian:buster 版本的可用于编译可执行程序的镜像：`simonkorl0228/aitrans_build`可供使用。将整个仓库复制到镜像中即可正常进行编译。
+
+如果需要一个基本的开发环境，可以使用 `simonkorl0228/dtp-docker` 镜像进行测试开发。该镜像采用 Ubuntu 镜像为基础，后续的版本号与 Ubuntu 镜像版本一致。
 
 #### Rust 工具链安装
 
@@ -218,7 +221,9 @@ $ git submodule init
 $ git submodule update
 ```
 
-boringssl 库在国内 git 下载速度缓慢，建议直接下载压缩文件：https://github.com/google/boringssl
+boringssl 库在国内 git 下载速度缓慢，可以通过 github 网页，点击进入 `deps/boringssl` 目录并且下载 `.zip` 文件。
+
+**请注意，该方法可能会导致未知的编译问题。如果发现相关问题请直接使用 submodule 进行更新**
 
 ## 样例程序说明
 
@@ -253,7 +258,7 @@ $ cargo build --release
 
 构建结果在 target/release 目录下，包含三个文件：`libquiche.a`静态库、`libquiche.so`动态库和`libquiche.rlib`Rust 链接库。
 
-注意：该项目依赖 [BoringSSL] 来完成加密握手环节。为了编译该库，可能需要`cmake`, `go`,`perl`的依赖。在 Windows 上可能还需要 [NASM](https://www.nasm.us/)。 可以查看[ BoringSSL 文档](https://github.com/google/boringssl/blob/master/BUILDING.md) 了解更多细节。
+注意：该项目依赖 [BoringSSL] 来完成加密握手环节。为了编译该库，可能需要`cmake`, `go`,`perl`的依赖。在 Windows 上可能还需要 [NASM](https://www.nasm.us/)。 可以查看[BoringSSL 文档](https://github.com/google/boringssl/blob/master/BUILDING.md) 了解更多细节。
 
 [BoringSSL]: https://boringssl.googlesource.com/boringssl/
 
