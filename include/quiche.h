@@ -175,6 +175,8 @@ enum quiche_cc_algorithm {
 void quiche_config_set_cc_algorithm(quiche_config *config, enum quiche_cc_algorithm algo);
 // TODO: void quiche_config_set_cc_algorithm_name(quiche_config *config, const char* name);
 
+void quiche_config_set_redundancy_rate(quiche_config *config, float rate);
+
 enum quiche_scheduler_type {
     SCHE_BASIC = 0,
     SCHE_DTP   = 1,
