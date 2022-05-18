@@ -42,7 +42,6 @@ use crate::Error;
 use crate::Result;
 use crate::ranges;
 use crate::scheduler::{Scheduler, DynScheduler};
-use crate::scheduler;
 
 const MAX_WRITE_SIZE: usize = 1000;
 

@@ -264,6 +264,8 @@
 
 #[macro_use]
 extern crate log;
+#[cfg(feature = "fec")]
+#[macro_use]
 extern crate reed_solomon_erasure;
 
 use std::cmp;
@@ -1582,58 +1584,61 @@ impl Connection {
         // ACK and PADDING.
         let mut ack_elicited = false;
 
-        // Process packet payload.
-        // check if this is the FEC frame.
-        if hdr.fec_info.group_id != 0 {
-            ack_elicited = true;
-            // find fec group.
-            let fec_group = self
-                .fec_decoders
-                .entry(hdr.fec_info.group_id)
-                .or_insert(fec::FecGroup::new(hdr.fec_info, payload.cap()));
-            // feed into the fec group.
-            let fec_frame = fec::FecFrame {
-                info: hdr.fec_info,
-                data: payload.to_vec(),
-            };
-            fec_group.feed_fec_frame(&fec_frame);
-            // Try to decode
-            if let Some(shards) = fec_group.reconstruct() {
-                debug!("restored");
-                for mut shard in shards {
-                    let mut restored = octets::Octets::with_slice(&mut shard);
-                    debug!("shard 0");
-                    while restored.cap() > 0 {
-                        let frame = frame::Frame::from_bytes(
-                            &mut restored,
-                            packet::Type::Short,
-                        )?;
-                        // Remove ack illicited
+        if cfg!(feature = "fec") {
+            // Process packet payload.
+            // check if this is the FEC frame.
+            if hdr.fec_info.group_id != 0 {
+                ack_elicited = true;
+                // find fec group.
+                let fec_group = self
+                    .fec_decoders
+                    .entry(hdr.fec_info.group_id)
+                    .or_insert(fec::FecGroup::new(hdr.fec_info, payload.cap()));
+                // feed into the fec group.
+                let fec_frame = fec::FecFrame {
+                    info: hdr.fec_info,
+                    data: payload.to_vec(),
+                };
+                fec_group.feed_fec_frame(&fec_frame);
+                // Try to decode
+                if let Some(shards) = fec_group.reconstruct() {
+                    debug!("restored");
+                    for mut shard in shards {
+                        let mut restored = octets::Octets::with_slice(&mut shard);
+                        debug!("shard 0");
+                        while restored.cap() > 0 {
+                            let frame = frame::Frame::from_bytes(
+                                &mut restored,
+                                packet::Type::Short,
+                            )?;
+                            // Remove ack illicited
 
-                        self.process_frame(frame, epoch, now)?;
+                            self.process_frame(frame, epoch, now)?;
+                        }
                     }
                 }
             }
-        }
-        // Is this packet redundant to FEC ?
-        if hdr.fec_info.group_id == 0 ||
-            (hdr.fec_info.group_id != 0 && hdr.fec_info.index < hdr.fec_info.m)
-        {
-            // If not, then process the frames normally
-            while payload.cap() > 0 {
-                let frame = frame::Frame::from_bytes(&mut payload, hdr.ty)?;
+            // Is this packet redundant to FEC ?
+            if hdr.fec_info.group_id == 0 ||
+                (hdr.fec_info.group_id != 0 && hdr.fec_info.index < hdr.fec_info.m)
+            {
+                // If not, then process the frames normally
+                while payload.cap() > 0 {
+                    let frame = frame::Frame::from_bytes(&mut payload, hdr.ty)?;
 
-                if frame.ack_eliciting() {
-                    ack_elicited = true;
+                    if frame.ack_eliciting() {
+                        ack_elicited = true;
+                    }
+
+                    self.process_frame(frame, epoch, now)?;
                 }
-
-                self.process_frame(frame, epoch, now)?;
+            } else {
+                // FEC redundant packet
+                // just advance the buffer.
+                payload.get_bytes(payload.cap()).unwrap();
             }
-        } else {
-            // FEC redundant packet
-            // just advance the buffer.
-            payload.get_bytes(payload.cap()).unwrap();
         }
+
 
         // Process acked frames.
         for acked in self.recovery.acked[epoch].drain(..) {
@@ -3686,7 +3691,11 @@ impl Connection {
 
     /// set tail size threshold
     pub fn set_tail(&mut self, tail_size: u64) {
-        self.tail_size = Some(tail_size * 1303);
+        if cfg!(feature = "fec") {
+            self.tail_size = Some(tail_size * 1303);
+        } else {
+            self.tail_size = None;
+        }
     }
 
     /// get Data: ACK ratio with/without interface SolutionAckRatio
@@ -3711,10 +3720,14 @@ impl Connection {
     // rtt: ms
     // pacing_rate: B/s
     fn get_redundancy_rate(_block: &stream::Block, _rate: f32, _rtt: f64, _pacing_rate: f64, _current_time: u64, _loss_count: usize, _total_pkt_nums: usize) -> f32 {
-        if cfg!(feature = "interface") {
-            unsafe { SolutionRedundancy() }
+        if cfg!(feature = "fec") {
+            if cfg!(feature = "interface") {
+                unsafe { SolutionRedundancy() }
+            } else {
+                _rate
+            }
         } else {
-            _rate
+            0.0
         }
     }
 }
