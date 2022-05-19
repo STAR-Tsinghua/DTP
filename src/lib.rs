@@ -1584,61 +1584,58 @@ impl Connection {
         // ACK and PADDING.
         let mut ack_elicited = false;
 
-        if cfg!(feature = "fec") {
-            // Process packet payload.
-            // check if this is the FEC frame.
-            if hdr.fec_info.group_id != 0 {
-                ack_elicited = true;
-                // find fec group.
-                let fec_group = self
-                    .fec_decoders
-                    .entry(hdr.fec_info.group_id)
-                    .or_insert(fec::FecGroup::new(hdr.fec_info, payload.cap()));
-                // feed into the fec group.
-                let fec_frame = fec::FecFrame {
-                    info: hdr.fec_info,
-                    data: payload.to_vec(),
-                };
-                fec_group.feed_fec_frame(&fec_frame);
-                // Try to decode
-                if let Some(shards) = fec_group.reconstruct() {
-                    debug!("restored");
-                    for mut shard in shards {
-                        let mut restored = octets::Octets::with_slice(&mut shard);
-                        debug!("shard 0");
-                        while restored.cap() > 0 {
-                            let frame = frame::Frame::from_bytes(
-                                &mut restored,
-                                packet::Type::Short,
-                            )?;
-                            // Remove ack illicited
+        // Process packet payload.
+        // check if this is the FEC frame.
+        if hdr.fec_info.group_id != 0 {
+            ack_elicited = true;
+            // find fec group.
+            let fec_group = self
+                .fec_decoders
+                .entry(hdr.fec_info.group_id)
+                .or_insert(fec::FecGroup::new(hdr.fec_info, payload.cap()));
+            // feed into the fec group.
+            let fec_frame = fec::FecFrame {
+                info: hdr.fec_info,
+                data: payload.to_vec(),
+            };
+            fec_group.feed_fec_frame(&fec_frame);
+            // Try to decode
+            if let Some(shards) = fec_group.reconstruct() {
+                debug!("restored");
+                for mut shard in shards {
+                    let mut restored = octets::Octets::with_slice(&mut shard);
+                    debug!("shard 0");
+                    while restored.cap() > 0 {
+                        let frame = frame::Frame::from_bytes(
+                            &mut restored,
+                            packet::Type::Short,
+                        )?;
+                        // Remove ack illicited
 
-                            self.process_frame(frame, epoch, now)?;
-                        }
+                        self.process_frame(frame, epoch, now)?;
                     }
                 }
-            }
-            // Is this packet redundant to FEC ?
-            if hdr.fec_info.group_id == 0 ||
-                (hdr.fec_info.group_id != 0 && hdr.fec_info.index < hdr.fec_info.m)
-            {
-                // If not, then process the frames normally
-                while payload.cap() > 0 {
-                    let frame = frame::Frame::from_bytes(&mut payload, hdr.ty)?;
-
-                    if frame.ack_eliciting() {
-                        ack_elicited = true;
-                    }
-
-                    self.process_frame(frame, epoch, now)?;
-                }
-            } else {
-                // FEC redundant packet
-                // just advance the buffer.
-                payload.get_bytes(payload.cap()).unwrap();
             }
         }
+         // Is this packet redundant to FEC ?
+        if hdr.fec_info.group_id == 0 ||
+            (hdr.fec_info.group_id != 0 && hdr.fec_info.index < hdr.fec_info.m)
+        {
+            // If not, then process the frames normally
+            while payload.cap() > 0 {
+                let frame = frame::Frame::from_bytes(&mut payload, hdr.ty)?;
 
+                if frame.ack_eliciting() {
+                    ack_elicited = true;
+                }
+
+                self.process_frame(frame, epoch, now)?;
+            }
+        } else {
+            // FEC redundant packet
+            // just advance the buffer.
+            payload.get_bytes(payload.cap()).unwrap();
+        }
 
         // Process acked frames.
         for acked in self.recovery.acked[epoch].drain(..) {
