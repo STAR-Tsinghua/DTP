@@ -277,10 +277,17 @@ use std::time;
 use std::pin::Pin;
 use std::str::FromStr;
 
+#[cfg(feature="interface")]
 extern {
     fn SolutionInit(init_cwnd: *mut u64, init_pacing_rate: *mut u64);
     fn SolutionRedundancy() -> libc::c_float;
     fn SolutionAckRatio() -> u64;
+}
+
+#[allow(unused_variables)]
+fn solution_init(init_cwnd: *mut u64, init_pacing_rate: *mut u64) {
+    #[cfg(feature="interface")]
+    unsafe{ SolutionInit(init_cwnd, init_pacing_rate) };
 }
 
 pub use crate::cc::Algorithm as CongestionControlAlgorithm;
@@ -747,9 +754,7 @@ impl Config {
         // which will cause unexpected errors without warning
         // TODO: implement default block selection algorithm 
         // TODO: with conditional compilation in stream.rs
-        unsafe {
-            SolutionInit(&mut self.init_cwnd, &mut self.init_pacing_rate)
-        };
+        solution_init(&mut self.init_cwnd, &mut self.init_pacing_rate);
     }
 
     /// Set the type of stream scheduler by its name
@@ -3698,20 +3703,17 @@ impl Connection {
     /// get Data: ACK ratio with/without interface SolutionAckRatio
     ///
     /// ACK packets are sent when `pk_num % get_data_ack_ratio == 0`
-    fn get_data_ack_ratio(_ratio: u64) -> u64{
-        let ack_ratio = {
-            if cfg!(feature = "interface") {
-                unsafe { SolutionAckRatio() }
-            } else {
-                _ratio
-            }
-        };
+    fn get_data_ack_ratio(_ratio: u64) -> u64 {
+        let ack_ratio = _ratio;
+
+        #[cfg(feature = "interface")]
+        let ack_ratio = unsafe {SolutionAckRatio()};
 
         return if ack_ratio > 0 {
             ack_ratio
         } else {
             4
-        }
+        };
     }
 
     // rtt: ms
@@ -3719,12 +3721,14 @@ impl Connection {
     fn get_redundancy_rate(_block: &stream::Block, _rate: f32, _rtt: f64, _pacing_rate: f64, _current_time: u64, _loss_count: usize, _total_pkt_nums: usize) -> f32 {
         if cfg!(feature = "fec") {
             if cfg!(feature = "interface") {
-                unsafe { SolutionRedundancy() }
+                #[cfg(feature = "interface")]
+                return unsafe { SolutionRedundancy() };
+                return _rate;
             } else {
-                _rate
+                return _rate;
             }
         } else {
-            0.0
+            return 0.0;
         }
     }
 }

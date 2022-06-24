@@ -49,14 +49,17 @@ pub struct CcInfo {
     pub packet_id: u64,
 }
 
+#[cfg(feature = "interface")]
 extern {
     fn SolutionCcTrigger(
         cc_infos: *mut CcInfo, cc_num: u64, cwnd: *mut u64, pacing_rate: *mut u64,
     );
 }
 
+#[allow(unused_variables)]
 fn cc_trigger(cc_infos: *mut CcInfo, cc_num: u64, cwnd: *mut u64, pacing_rate: *mut u64,
 ) {
+    #[cfg(feature = "interface")]
     unsafe {SolutionCcTrigger(cc_infos, cc_num, cwnd, pacing_rate)}
 }
 

@@ -205,18 +205,18 @@ fn main() {
         write_pkg_config();
     }
 
-    let mut build = cc::Build::new();
+    // let mut build = cc::Build::new();
 
     // build.file("src/aitrans/pre_solution.cxx")
         //  .include("src/aitrans/include");
 
-    if !cfg!(feature = "interface") {
-        build.file("src/aitrans/solution.cxx")
-             .include("src/aitrans/include")
-             .flag("-w")
-             .cpp(true)
-             .compile("aitrans");
-    }
+    // if !cfg!(feature = "interface") {
+    //     build.file("src/aitrans/solution.cxx")
+    //          .include("src/aitrans/include")
+    //          .flag("-w")
+    //          .cpp(true)
+    //          .compile("aitrans");
+    // }
 
     // build.cpp(true)
         //  .compile("aitrans");

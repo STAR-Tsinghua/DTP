@@ -650,6 +650,13 @@ impl Connection {
         self.send_request_full(conn, headers, fin, 200)
     }
 
+    /// Sends an HTTP/3 request.
+    /// The request will be dropped after deadline dut to DTP
+    ///
+    /// The request is encoded from the provided list of headers, and sent on
+    /// a newly allocated stream.
+    ///
+    /// On success the newly allocated stream ID is returned.
     pub fn send_request_full(
         &mut self, conn: &mut super::Connection, headers: &[Header], fin: bool,
         deadline: u64,
@@ -670,7 +677,9 @@ impl Connection {
     ) -> Result<()> {
         self.send_response_full(conn, stream_id, headers, fin, 200)
     }
-
+    
+    /// Sends an HTTP/3 response on the specified stream.
+    /// The response will be dropped after deadline due to DTP
     pub fn send_response_full(
         &mut self, conn: &mut super::Connection, stream_id: u64,
         headers: &[Header], fin: bool, deadline: u64,
@@ -761,6 +770,10 @@ impl Connection {
         self.send_body_full(conn, stream_id, body, fin, 200)
     }
 
+    /// Sends an HTTP/3 body chunk on the given stream.
+    /// The message will be dropped due to DTP after waiting for deadline
+    ///
+    /// On success the number of bytes written is returned.
     pub fn send_body_full(
         &mut self, conn: &mut super::Connection, stream_id: u64, body: &[u8],
         fin: bool, deadline: u64,

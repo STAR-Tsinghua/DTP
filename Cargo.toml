@@ -55,7 +55,7 @@ ndk-old-gcc = []
 bench = ["criterion"]
 
 # For building with exposing interfaces without default implementation
-interface = []
+# interface = []
 
 # fec
 fec = ["reed-solomon-erasure"]

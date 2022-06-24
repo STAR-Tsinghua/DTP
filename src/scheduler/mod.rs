@@ -78,10 +78,6 @@ pub fn new_scheduler(sche: SchedulerType) -> Box<dyn Scheduler> {
             Box::new(c_scheduler::CScheduler::new()),
         SchedulerType::Dynamic=>
             Box::new(DynScheduler::new()),
-        _ => {
-            warn!("Invalid scheduler type! Change to default scheduler");
-            Box::new(DynScheduler::new())
-        }
     }
 }
 

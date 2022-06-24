@@ -102,6 +102,7 @@ pub trait FecAlgorithm {
 
 /// a fake and empty Fec algorithm
 #[cfg(not(feature = "fec"))]
+#[allow(dead_code)]
 pub struct RSFec {
     m: usize,
     n: usize
