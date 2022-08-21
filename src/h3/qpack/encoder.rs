@@ -158,8 +158,9 @@ fn lookup_static(h: &Header) -> Option<(u64, bool)> {
         ("content-type", "text/plain;charset=utf-8") => (54, true),
         ("range", "bytes=0-") => (55, true),
         ("strict-transport-security", "max-age=31536000") => (56, true),
-        ("strict-transport-security", "max-age=31536000; includesubdomains") =>
-            (57, true),
+        ("strict-transport-security", "max-age=31536000; includesubdomains") => {
+            (57, true)
+        },
         (
             "strict-transport-security",
             "max-age=31536000; includesubdomains; preload",

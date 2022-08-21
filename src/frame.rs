@@ -753,10 +753,10 @@ impl Frame {
 
     pub fn ack_eliciting(&self) -> bool {
         match self {
-            Frame::Padding { .. } |
-            Frame::ACK { .. } |
-            Frame::ApplicationClose { .. } |
-            Frame::ConnectionClose { .. } => false,
+            Frame::Padding { .. }
+            | Frame::ACK { .. }
+            | Frame::ApplicationClose { .. }
+            | Frame::ConnectionClose { .. } => false,
 
             _ => true,
         }

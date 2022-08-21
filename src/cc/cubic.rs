@@ -38,8 +38,8 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::cc;
-use crate::packet;
 use crate::cc::hystart;
+use crate::packet;
 use crate::recovery::Sent;
 
 /// CUBIC Constants.
@@ -111,38 +111,39 @@ impl State {
     pub fn w_cubic(&self, t: Duration, max_datagram_size: usize) -> f64 {
         let w_max = self.w_max / max_datagram_size as f64;
 
-        (C * (t.as_secs_f64() - self.k).powi(3) + w_max) *
-            max_datagram_size as f64
+        (C * (t.as_secs_f64() - self.k).powi(3) + w_max)
+            * max_datagram_size as f64
     }
 
     // W_est(t) = w_max * beta_cubic + 3 * (1 - beta_cubic) / (1 + beta_cubic) *
     // (t / RTT) (Eq. 4)
-    pub fn w_est(&self, t: Duration, rtt: Duration, max_datagram_size: usize) -> f64 {
+    pub fn w_est(
+        &self, t: Duration, rtt: Duration, max_datagram_size: usize,
+    ) -> f64 {
         let w_max = self.w_max / max_datagram_size as f64;
-        (w_max * BETA_CUBIC +
-            3.0 * (1.0 - BETA_CUBIC) / (1.0 + BETA_CUBIC) * t.as_secs_f64() /
-                rtt.as_secs_f64()) *
-            max_datagram_size as f64
+        (w_max * BETA_CUBIC
+            + 3.0 * (1.0 - BETA_CUBIC) / (1.0 + BETA_CUBIC) * t.as_secs_f64()
+                / rtt.as_secs_f64())
+            * max_datagram_size as f64
     }
 }
 
 pub struct Cubic {
     congestion_window: usize,
-    
+
     bytes_in_flight: usize,
-    
-    congestion_recovery_start_time: Option<Instant>, 
+
+    congestion_recovery_start_time: Option<Instant>,
 
     ssthresh: usize,
 
-    cubic_state: State, 
+    cubic_state: State,
 
     hystart: cc::hystart::Hystart,
 
     // for slow start and congestion avoidance
     bytes_acked_sl: usize,
 }
-
 
 impl cc::CongestionControl for Cubic {
     fn new(_init_cwnd: u64, _init_pacing_rate: u64) -> Self
@@ -157,12 +158,12 @@ impl cc::CongestionControl for Cubic {
             congestion_recovery_start_time: None,
 
             ssthresh: std::usize::MAX,
-           
+
             cubic_state: State::default(),
 
             hystart: hystart::Hystart::new(true),
 
-            bytes_acked_sl: 0
+            bytes_acked_sl: 0,
         }
     }
 
@@ -175,17 +176,14 @@ impl cc::CongestionControl for Cubic {
         let cubic = &mut r.cubic_state;
 
         r.congestion_recovery_start_time = None;
-    
+
         cubic.w_last_max = r.congestion_window as f64;
         cubic.w_max = cubic.w_last_max;
-    
+
         // 4.7 Timeout - reduce ssthresh based on BETA_CUBIC
         r.ssthresh = (r.congestion_window as f64 * BETA_CUBIC) as usize;
-        r.ssthresh = cmp::max(
-            r.ssthresh,
-            cc::MINIMUM_WINDOW
-        );
-    
+        r.ssthresh = cmp::max(r.ssthresh, cc::MINIMUM_WINDOW);
+
         cubic.cwnd_inc = 0;
 
         // reno::collapse_window
@@ -221,7 +219,9 @@ impl cc::CongestionControl for Cubic {
 
                 // We were application limited (idle) for a while.
                 // Shift epoch start to keep cwnd growth to cubic curve.
-                if let Some(recovery_start_time) = r.congestion_recovery_start_time {
+                if let Some(recovery_start_time) =
+                    r.congestion_recovery_start_time
+                {
                     if delta.as_nanos() > 0 {
                         r.congestion_recovery_start_time =
                             Some(recovery_start_time + delta);
@@ -237,10 +237,9 @@ impl cc::CongestionControl for Cubic {
     }
 
     fn on_packet_acked_cc(
-        &mut self, packet: &Sent, 
-        _srtt: Duration, min_rtt: Duration, latest_rtt: Duration,
-        app_limited: bool, _trace_id: &str,
-        epoch: packet::Epoch, lost_count: usize
+        &mut self, packet: &Sent, _srtt: Duration, min_rtt: Duration,
+        latest_rtt: Duration, app_limited: bool, _trace_id: &str,
+        epoch: packet::Epoch, lost_count: usize,
     ) {
         let mut r = self;
         let now = Instant::now();
@@ -265,8 +264,8 @@ impl cc::CongestionControl for Cubic {
         if r.congestion_recovery_start_time.is_some() {
             let new_lost = lost_count - r.cubic_state.prior.lost_count;
 
-            if r.congestion_window < r.cubic_state.prior.congestion_window &&
-                new_lost < RESTORE_COUNT_THRESHOLD
+            if r.congestion_window < r.cubic_state.prior.congestion_window
+                && new_lost < RESTORE_COUNT_THRESHOLD
             {
                 r.rollback();
                 return;
@@ -277,9 +276,9 @@ impl cc::CongestionControl for Cubic {
             // Slow start.
             r.congestion_window += packet.size;
 
-            if r.hystart.enabled() &&
-                epoch == packet::EPOCH_APPLICATION &&
-                r.hystart.try_enter_lss(
+            if r.hystart.enabled()
+                && epoch == packet::EPOCH_APPLICATION
+                && r.hystart.try_enter_lss(
                     packet,
                     latest_rtt,
                     r.congestion_window,
@@ -320,7 +319,8 @@ impl cc::CongestionControl for Cubic {
             let t = now - ca_start_time;
 
             // w_cubic(t + rtt)
-            let w_cubic = r.cubic_state.w_cubic(t + min_rtt, cc::MAX_DATAGRAM_SIZE);
+            let w_cubic =
+                r.cubic_state.w_cubic(t + min_rtt, cc::MAX_DATAGRAM_SIZE);
 
             // w_est(t)
             let w_est = r.cubic_state.w_est(t, min_rtt, cc::MAX_DATAGRAM_SIZE);
@@ -332,8 +332,8 @@ impl cc::CongestionControl for Cubic {
                 cubic_cwnd = cmp::max(cubic_cwnd, w_est as usize);
             } else if cubic_cwnd < w_cubic as usize {
                 // Concave region or convex region use same increment.
-                let cubic_inc = (w_cubic - cubic_cwnd as f64) / cubic_cwnd as f64 *
-                    cc::MAX_DATAGRAM_SIZE as f64;
+                let cubic_inc = (w_cubic - cubic_cwnd as f64) / cubic_cwnd as f64
+                    * cc::MAX_DATAGRAM_SIZE as f64;
 
                 cubic_cwnd += cubic_inc as usize;
             }
@@ -366,21 +366,26 @@ impl cc::CongestionControl for Cubic {
             }
         }
         r.bytes_acked_sl = 0;
-        debug!("timestamp= {:?} {:?}",time::SystemTime::now()
-        .duration_since(time::SystemTime::UNIX_EPOCH).unwrap().as_millis(), r);
+        debug!(
+            "timestamp= {:?} {:?}",
+            time::SystemTime::now()
+                .duration_since(time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            r
+        );
     }
 
     fn congestion_event(
         &mut self, _srtt: Duration, time_sent: Instant, now: Instant,
-        _trace_id: &str, _packet_id: u64,
-        epoch: packet::Epoch, lost_count: usize
+        _trace_id: &str, _packet_id: u64, epoch: packet::Epoch,
+        lost_count: usize,
     ) {
         // Start a new congestion event if packet was sent after the
         // start of the previous congestion recovery period.
         if !self.in_congestion_recovery(time_sent) {
-            
             self.checkpoint(lost_count);
-            
+
             let r = self;
 
             r.congestion_recovery_start_time = Some(now);
@@ -395,10 +400,7 @@ impl cc::CongestionControl for Cubic {
 
             r.cubic_state.w_max = r.congestion_window as f64;
             r.ssthresh = (r.cubic_state.w_max * BETA_CUBIC) as usize;
-            r.ssthresh = cmp::max(
-                r.ssthresh,
-                cc::MINIMUM_WINDOW,
-            );
+            r.ssthresh = cmp::max(r.ssthresh, cc::MINIMUM_WINDOW);
             r.congestion_window = r.ssthresh;
             r.cubic_state.k = r.cubic_state.cubic_k(cc::MAX_DATAGRAM_SIZE);
 
@@ -408,8 +410,14 @@ impl cc::CongestionControl for Cubic {
             if r.hystart.in_lss(epoch) {
                 r.hystart.congestion_event();
             }
-            debug!("timestamp= {:?} {:?}",time::SystemTime::now()
-            .duration_since(time::SystemTime::UNIX_EPOCH).unwrap().as_millis(), r);
+            debug!(
+                "timestamp= {:?} {:?}",
+                time::SystemTime::now()
+                    .duration_since(time::SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis(),
+                r
+            );
         }
     }
 
@@ -468,8 +476,8 @@ impl std::fmt::Debug for Cubic {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::recovery;
     use crate::cc::hystart;
+    use crate::recovery;
 
     #[test]
     fn cubic_init() {
@@ -489,14 +497,14 @@ mod tests {
 
         let mut r = recovery::Recovery::new(&cfg);
 
-        let dummy_pkt = Sent { 
+        let dummy_pkt = Sent {
             pkt_num: 0,
             frames: vec![],
             time: Instant::now() - Duration::from_secs(1),
             size: 1000,
             ack_eliciting: true,
             in_flight: false,
-            fec_info: crate::fec::FecStatus::default()
+            fec_info: crate::fec::FecStatus::default(),
         };
         r.cc.on_packet_sent_cc(&dummy_pkt, 1000, "cubic_send");
 
@@ -523,14 +531,14 @@ mod tests {
 
     //     // Send initcwnd full MSS packets to become no longer app limited
     //     for _ in 0..cc::INITIAL_WINDOW_PACKETS {
-    //         r.on_packet_sent(p, packet::EPOCH_APPLICATION, true, 
+    //         r.on_packet_sent(p, packet::EPOCH_APPLICATION, true,
     //             now,  "cubic_slow_start");
     //     }
 
     //     let cwnd_prev = r.cc.cwnd();
 
     //     r.on_packet_acked(
-    //         &p, 
+    //         &p,
     //         packet::EPOCH_APPLICATION,
     //         r.rtt(),
     //         r.min_rtt,

@@ -55,9 +55,10 @@ extern {
     );
 }
 
-fn cc_trigger(cc_infos: *mut CcInfo, cc_num: u64, cwnd: *mut u64, pacing_rate: *mut u64,
+fn cc_trigger(
+    cc_infos: *mut CcInfo, cc_num: u64, cwnd: *mut u64, pacing_rate: *mut u64,
 ) {
-    unsafe {SolutionCcTrigger(cc_infos, cc_num, cwnd, pacing_rate)}
+    unsafe { SolutionCcTrigger(cc_infos, cc_num, cwnd, pacing_rate) }
 }
 
 pub fn cc_trigger_async(
@@ -145,10 +146,9 @@ impl cc::CongestionControl for CCTrigger {
     }
 
     fn on_packet_acked_cc(
-        &mut self, packet: &Sent, 
-        srtt: Duration, _min_rtt: Duration, _latest_rtt: Duration,
-        _app_limited: bool, _trace_id: &str,
-        _epoch: packet::Epoch, _lost_count: usize
+        &mut self, packet: &Sent, srtt: Duration, _min_rtt: Duration,
+        _latest_rtt: Duration, _app_limited: bool, _trace_id: &str,
+        _epoch: packet::Epoch, _lost_count: usize,
     ) {
         self.bytes_in_flight -= packet.size;
         self.cc_trigger(
@@ -161,10 +161,9 @@ impl cc::CongestionControl for CCTrigger {
     }
 
     fn congestion_event(
-        &mut self, 
-        srtt: Duration, _time_sent: Instant, _now: Instant,
-        _trace_id: &str, packet_id: u64,
-        _epoch: packet::Epoch, _lost_count: usize
+        &mut self, srtt: Duration, _time_sent: Instant, _now: Instant,
+        _trace_id: &str, packet_id: u64, _epoch: packet::Epoch,
+        _lost_count: usize,
     ) {
         self.cc_trigger(
             'D',

@@ -149,15 +149,15 @@ impl<T: PartialOrd + PartialEq + Default + Copy> Minmax<T> {
                 self.estimate[1] = self.estimate[2];
                 self.estimate[2] = val;
             }
-        } else if self.estimate[1].time == self.estimate[0].time &&
-            delta_time > win.div_f32(4.0)
+        } else if self.estimate[1].time == self.estimate[0].time
+            && delta_time > win.div_f32(4.0)
         {
             // We've passed a quarter of the window without a new val so take a
             // 2nd estimate from the 2nd quarter of the window.
             self.estimate[2] = val;
             self.estimate[1] = val;
-        } else if self.estimate[2].time == self.estimate[1].time &&
-            delta_time > win.div_f32(2.0)
+        } else if self.estimate[2].time == self.estimate[1].time
+            && delta_time > win.div_f32(2.0)
         {
             // We've passed half the window without finding a new val so take a
             // 3rd estimate from the last half of the window.

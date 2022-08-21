@@ -91,10 +91,9 @@ impl cc::CongestionControl for Reno {
     }
 
     fn on_packet_acked_cc(
-        &mut self, packet: &Sent, 
-        _srtt: Duration, _min_rtt: Duration, _latest_rtt: Duration,
-        app_limited: bool, _trace_id: &str,
-        _epoch: packet::Epoch, _lost_count: usize
+        &mut self, packet: &Sent, _srtt: Duration, _min_rtt: Duration,
+        _latest_rtt: Duration, app_limited: bool, _trace_id: &str,
+        _epoch: packet::Epoch, _lost_count: usize,
     ) {
         self.bytes_in_flight -= packet.size;
 
@@ -114,29 +113,41 @@ impl cc::CongestionControl for Reno {
             self.congestion_window +=
                 (cc::MAX_DATAGRAM_SIZE * packet.size) / self.congestion_window;
         }
-        debug!("timestamp= {:?} {:?}",time::SystemTime::now()
-            .duration_since(time::SystemTime::UNIX_EPOCH).unwrap().as_millis(), self);
+        debug!(
+            "timestamp= {:?} {:?}",
+            time::SystemTime::now()
+                .duration_since(time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            self
+        );
     }
 
     fn congestion_event(
         &mut self, _srtt: Duration, time_sent: Instant, now: Instant,
-        _trace_id: &str, _packet_id: u64,
-        _epoch: packet::Epoch, _lost_count: usize
+        _trace_id: &str, _packet_id: u64, _epoch: packet::Epoch,
+        _lost_count: usize,
     ) {
         // Start a new congestion event if packet was sent after the
         // start of the previous congestion recovery period.
         if !self.in_congestion_recovery(time_sent) {
             self.congestion_recovery_start_time = Some(now);
 
-            self.congestion_window = (self.congestion_window as f64 *
-                cc::LOSS_REDUCTION_FACTOR)
+            self.congestion_window = (self.congestion_window as f64
+                * cc::LOSS_REDUCTION_FACTOR)
                 as usize;
             self.congestion_window =
                 std::cmp::max(self.congestion_window, cc::MINIMUM_WINDOW);
             self.ssthresh = self.congestion_window;
 
-            debug!("timestamp= {:?} {:?}",time::SystemTime::now()
-            .duration_since(time::SystemTime::UNIX_EPOCH).unwrap().as_millis(), self);
+            debug!(
+                "timestamp= {:?} {:?}",
+                time::SystemTime::now()
+                    .duration_since(time::SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis(),
+                self
+            );
         }
     }
 

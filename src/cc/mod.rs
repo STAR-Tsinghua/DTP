@@ -56,13 +56,13 @@ const ABC_L: usize = 2;
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Algorithm {
     /// Reno congestion control algorithm (default). `reno` in a string form.
-    Reno      = 0,
+    Reno = 0,
     /// BBR congestion control algorithm
-    BBR       = 1,
+    BBR = 1,
     /// cc_trigger in Aitrans solution
     CcTrigger = 2,
     /// CUBIC congestion control algorithm
-    CUBIC     = 3
+    CUBIC = 3,
 }
 
 impl FromStr for Algorithm {
@@ -110,8 +110,9 @@ where
     /// InCongestionRecovery(sent_time)
     fn in_congestion_recovery(&self, sent_time: Instant) -> bool {
         match self.congestion_recovery_start_time() {
-            Some(congestion_recovery_start_time) =>
-                sent_time <= congestion_recovery_start_time,
+            Some(congestion_recovery_start_time) => {
+                sent_time <= congestion_recovery_start_time
+            },
 
             None => false,
         }
@@ -119,19 +120,15 @@ where
 
     /// OnPacketAckedCC(packet)
     fn on_packet_acked_cc(
-        &mut self, 
-        packet: &Sent, 
-        srtt: Duration, min_rtt: Duration, latest_rtt: Duration,
-        app_limited: bool, trace_id: &str,
-        epoch: packet::Epoch, lost_count: usize
+        &mut self, packet: &Sent, srtt: Duration, min_rtt: Duration,
+        latest_rtt: Duration, app_limited: bool, trace_id: &str,
+        epoch: packet::Epoch, lost_count: usize,
     );
 
     /// CongestionEvent(time_sent)
     fn congestion_event(
-        &mut self, 
-        srtt: Duration, time_sent: Instant, now: Instant,
-        trace_id: &str, packet_id: u64,
-        epoch: packet::Epoch, lost_count: usize
+        &mut self, srtt: Duration, time_sent: Instant, now: Instant,
+        trace_id: &str, packet_id: u64, epoch: packet::Epoch, lost_count: usize,
     );
 
     /// bbr function
@@ -157,13 +154,16 @@ pub fn new_congestion_control(
 ) -> Box<dyn CongestionControl> {
     trace!("Initializing congestion control: {:?}", algo);
     match algo {
-        Algorithm::Reno =>
-            Box::new(cc::reno::Reno::new(init_cwnd, init_pacing_rate)),
+        Algorithm::Reno => {
+            Box::new(cc::reno::Reno::new(init_cwnd, init_pacing_rate))
+        },
         Algorithm::BBR => Box::new(cc::bbr::BBR::default()),
-        Algorithm::CcTrigger =>
-            Box::new(cc::cc_trigger::CCTrigger::new(init_cwnd, init_pacing_rate)),
-        Algorithm::CUBIC =>
+        Algorithm::CcTrigger => {
+            Box::new(cc::cc_trigger::CCTrigger::new(init_cwnd, init_pacing_rate))
+        },
+        Algorithm::CUBIC => {
             Box::new(cc::cubic::Cubic::new(init_cwnd, init_pacing_rate))
+        },
     }
 }
 
@@ -197,6 +197,6 @@ mod tests {
 
 mod bbr;
 mod cc_trigger;
-mod reno;
-mod hystart;
 mod cubic;
+mod hystart;
+mod reno;

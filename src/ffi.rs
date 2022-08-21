@@ -54,7 +54,12 @@ impl log::Log for Logger {
     }
 
     fn log(&self, record: &log::Record) {
-        let line = format!("[{}] {}: {}\0",record.level(), record.target(), record.args());
+        let line = format!(
+            "[{}] {}: {}\0",
+            record.level(),
+            record.target(),
+            record.args()
+        );
         (self.cb)(line.as_ptr(), self.argp.load(atomic::Ordering::Relaxed));
     }
 
@@ -252,16 +257,12 @@ pub extern fn quiche_config_set_scheduler_type(
 
 // update by mc
 #[no_mangle]
-pub extern fn quiche_config_set_data_ack_ratio(
-    config: &mut Config, ratio: u64
-) {
+pub extern fn quiche_config_set_data_ack_ratio(config: &mut Config, ratio: u64) {
     config.init_data_ack_ratio = ratio;
 }
 // update by mc
 #[no_mangle]
-pub extern fn quiche_config_set_redundancy_rate(
-    config: &mut Config, rate: f32
-) {
+pub extern fn quiche_config_set_redundancy_rate(config: &mut Config, rate: f32) {
     config.init_redundancy_rate = rate;
 }
 
@@ -703,7 +704,7 @@ pub struct Stats {
     pub rtt: u64,
     pub cwnd: usize,
     pub recv_bytes: u64,
-    pub sent_bytes: u64 
+    pub sent_bytes: u64,
 }
 
 #[no_mangle]
