@@ -238,7 +238,9 @@ $ cargo run --example client http://127.0.0.1:4433/hello_world --no-verify
 
 可在客户端侧接收到 `Hello World!` 。该测试程序执行了一个简单的 HTTP3 GET 操作，获取位于 examples/root 目录下的文件。
 
-在 examples/ping-pong 目录下则用 C 语言实现了一个简单示例，可到对应目录下查看运行方法。
+在 examples/c_ping-pong 目录下则用 C 语言实现了一个简单示例，可到对应目录下查看运行方法。
+
+在 examples/c_features_example 目录下使用 C 语言实现了一个展示 DTP 新增的 features 的样例程序，可以在对应目录下查看运行方法。
 
 ## 项目构建
 

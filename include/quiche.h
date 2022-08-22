@@ -100,6 +100,17 @@ const char *quiche_version(void);
 int quiche_enable_debug_logging(void (*cb)(const char *line, void *argp),
                                 void *argp);
 
+enum log_level {
+    Trace = 0,
+    Debug = 1,
+    Info = 2,
+    Warn = 3,
+    Error = 4,
+    Off = 5,
+};
+
+int quiche_set_debug_logging_level(enum log_level level);
+
 // Stores configuration shared between multiple connections.
 typedef struct Config quiche_config;
 

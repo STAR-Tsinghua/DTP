@@ -72,10 +72,36 @@ pub extern fn quiche_enable_debug_logging(
         return -1;
     }
 
-    log::set_max_level(log::LevelFilter::Info);
+    log::set_max_level(log::LevelFilter::Trace);
 
     0
 }
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum LogLevel{
+    Trace = 0,
+    Debug = 1,
+    Info = 2,
+    Warn = 3,
+    Error = 4,
+    Off = 5,
+}
+
+#[no_mangle]
+pub extern fn quiche_set_debug_logging_level(level: LogLevel) -> c_int {
+    match level {
+        LogLevel::Off => log::set_max_level(log::LevelFilter::Off),
+        LogLevel::Error => log::set_max_level(log::LevelFilter::Error),
+        LogLevel::Warn => log::set_max_level(log::LevelFilter::Warn),
+        LogLevel::Info => log::set_max_level(log::LevelFilter::Info),
+        LogLevel::Debug => log::set_max_level(log::LevelFilter::Debug),
+        LogLevel::Trace => log::set_max_level(log::LevelFilter::Trace),
+    }
+
+    0
+}
+
 
 #[no_mangle]
 pub extern fn quiche_config_new(version: u32) -> *mut Config {

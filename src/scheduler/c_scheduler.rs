@@ -17,6 +17,7 @@ fn solution_select_block(
     current_time: u64) -> u64 {
     #[cfg(feature = "interface")]
     return unsafe { SolutionSelectBlock(blocks, block_num, next_packet_id, current_time) };
+    #[cfg(not(feature = "interface"))]
     return 0;
 }
 
@@ -26,6 +27,7 @@ fn solution_should_drop_block(
     rtt: libc::c_double, next_packet_id: u64, current_time: u64) -> bool {
     #[cfg(feature = "interface")]
     return unsafe { SolutionShouldDropBlock(block, bandwidth, rtt, next_packet_id, current_time) };
+    #[cfg(not(feature = "interface"))]
     return false;
 }
 

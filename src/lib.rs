@@ -290,6 +290,14 @@ fn solution_init(init_cwnd: *mut u64, init_pacing_rate: *mut u64) {
     unsafe{ SolutionInit(init_cwnd, init_pacing_rate) };
 }
 
+#[warn(dead_code)]
+fn solution_ack_ratio() -> u64 {
+    #[cfg(feature = "interface")]
+    unsafe { SolutionAckRatio() }
+    #[cfg(not(feature = "interface"))]
+    4
+}
+
 pub use crate::cc::Algorithm as CongestionControlAlgorithm;
 pub use crate::scheduler::SchedulerType;
 
@@ -1213,7 +1221,7 @@ impl Connection {
 
             fec_decoders: Default::default(),
 
-            tail_size: None,
+            tail_size: if cfg!(feature = "fec") { Some(5) } else { None },
         });
 
         if let Some(odcid) = odcid {
@@ -2352,16 +2360,20 @@ impl Connection {
                     let mut temp_n = 0;
 
                     if self.fec.is_empty() {
-                        let solution_redundancy = Connection::get_redundancy_rate(
-                            &block,
-                            self.init_redundancy_rate,
-                            rtt,
-                            bandwidth * 1024.0,
-                            now_time_ms as u64,
-                            self.recovery.lost_count,
-                            self.recovery.total_pkt_nums
-                        );
-
+                        let solution_redundancy = 
+                            if self.tail_size.is_some() && self.tail_size != Some(0) {
+                                Connection::get_redundancy_rate(
+                                    &block,
+                                    self.init_redundancy_rate,
+                                    rtt,
+                                    bandwidth * 1024.0,
+                                    now_time_ms as u64,
+                                    self.recovery.lost_count,
+                                    self.recovery.total_pkt_nums
+                                )
+                            } else {
+                                0.0
+                            };
 
                         if stream.send.len >= 1{
                             temp_m = ((stream.send.len - 1) / 1350 + 1) as u8;
@@ -2391,6 +2403,7 @@ impl Connection {
                         }
                     } else {
                         // Disable redundancy code feature at default
+                        debug!("Disable redundancy by None tail_size");
                     }
 
                     debug!(
@@ -3704,10 +3717,11 @@ impl Connection {
     ///
     /// ACK packets are sent when `pk_num % get_data_ack_ratio == 0`
     fn get_data_ack_ratio(_ratio: u64) -> u64 {
+        #[cfg(not(feature = "interface"))]
         let ack_ratio = _ratio;
 
         #[cfg(feature = "interface")]
-        let ack_ratio = unsafe {SolutionAckRatio()};
+        let ack_ratio = solution_ack_ratio();
 
         return if ack_ratio > 0 {
             ack_ratio
@@ -3723,6 +3737,7 @@ impl Connection {
             if cfg!(feature = "interface") {
                 #[cfg(feature = "interface")]
                 return unsafe { SolutionRedundancy() };
+                #[cfg(not(feature = "interface"))]
                 return _rate;
             } else {
                 return _rate;
