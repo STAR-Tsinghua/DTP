@@ -3732,15 +3732,30 @@ impl Connection {
 
     // rtt: ms
     // pacing_rate: B/s
-    fn get_redundancy_rate(_block: &stream::Block, _rate: f32, _rtt: f64, _pacing_rate: f64, _current_time: u64, _loss_count: usize, _total_pkt_nums: usize) -> f32 {
+    fn get_redundancy_rate(block: &stream::Block, rate: f32, rtt: f64, pacing_rate: f64, current_time: u64, loss_count: usize, total_pkt_nums: usize) -> f32 {
         if cfg!(feature = "fec") {
             if cfg!(feature = "interface") {
                 #[cfg(feature = "interface")]
                 return unsafe { SolutionRedundancy() };
-                #[cfg(not(feature = "interface"))]
-                return _rate;
+                #[cfg(not(feature = "interface"))] 
+                return 0.0;
             } else {
-                return _rate;
+                let waiting_time = current_time - block.block_create_time; // millis
+                let remaining_time = if waiting_time > block.block_deadline {
+                    0
+                } else {
+                    block.block_deadline - waiting_time
+                };
+                // deadline is in millis, current time is in micros
+                if (remaining_time as f64) < rtt * 2.0 {
+                    return rate;
+                } else if (block.remaining_size as f64 / remaining_time as f64) * 
+                    (1.0 + ((loss_count as f64 / total_pkt_nums as f64))) * 8.0 < pacing_rate {
+                    return rate;
+                }
+                else {
+                    return 0.0;
+                }
             }
         } else {
             return 0.0;
