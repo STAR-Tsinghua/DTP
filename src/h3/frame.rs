@@ -102,11 +102,13 @@ impl Frame {
                 push_id: b.get_varint()?,
             },
 
-            SETTINGS_FRAME_TYPE_ID =>
-                parse_settings_frame(&mut b, payload_length as usize)?,
+            SETTINGS_FRAME_TYPE_ID => {
+                parse_settings_frame(&mut b, payload_length as usize)?
+            },
 
-            PUSH_PROMISE_FRAME_TYPE_ID =>
-                parse_push_promise(payload_length, &mut b)?,
+            PUSH_PROMISE_FRAME_TYPE_ID => {
+                parse_push_promise(payload_length, &mut b)?
+            },
 
             GOAWAY_FRAME_TYPE_ID => Frame::GoAway {
                 stream_id: b.get_varint()?,

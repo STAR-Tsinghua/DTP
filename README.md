@@ -1,22 +1,27 @@
 # DTP (Deadline Transport Protocol)
+[中文文档](README_zh.md)
 
-DTP 协议是一个用户态的安全传输协议。DTP 基于 QUIC 协议进行研发，保留 QUIC 的其他特性的同时将数据进行了“块”的抽象，为用户提供了根据用户设定的截止时间（Deadline）和优先级（Priority）进行源端调度和源端丢弃的服务，在例如流媒体传输等传输场景下可以降低平均传输时延，提升用户体验。
+DTP is a user-space secure and high performance transport protocol based on QUIC.
+DTP transfers data in blocks and deadline-aware service for applications.  DTP strategically balances blocks' factors including deadline, priority, and dependency when deciding which block to send or drop. In addition, provide adaptive FEC to alleviate the delay caused by retransmission.
+DTP can improve performance in scenarios like streaming media transmission. 
 
-DTP 协议基于 [quiche](https://github.com/cloudflare/quiche) 进行开发，实现了 QUIC 传输协议并且加入了基于“块”的调度算法。该实现提供了一个底层的 API 来进行数据包的发送与处理。上层应用需要提供 I/O （如处理接口）并且需要使用具有定时器的事件循环来实现相关的数据收发逻辑。
+We outline the DTP’s modification of the QUIC in IETF [draft](https://datatracker.ietf.org/doc/html/draft-shi-quic-dtp-06).
 
-## 简单 API 说明
+The DTP protocol is developed based on [quiche](https://github.com/cloudflare/quiche). This implementation provides the API to send and process packets of QUIC. The application is responsible for providing I/O (e.g. sockets handling) as well as an event loop with support for timers.
 
-### 创建连接
+## Quick Start
 
-为了创建一个 DTP 连接，首先需要需要创建一个“配置”(configuration):
+### Connection setup
+
+In order to create a DTP connection, we first need to create a "configuration":
 
 ```rust
 let config = quiche::Config::new(quiche::PROTOCOL_VERSION)?;
 ```
 
-一个“配置”(`quiche::Config`)会包含若干与连接相关的可配置选项，包括连接超时的时长、最大的流的数量等。这个“配置”可以被多个“连接”(connection)共享。
+A "configuration" (`quiche::Config`) contains several configurable options related to the connection, including the length of the connection timeout, the maximum number of streams, etc. This "configuration" can be shared by multiple "connection"s.
 
-有了“配置”之后便可以创建“连接”，在客户端使用`connect()`函数，在服务端则使用`accept()`函数：
+With the "configuration", we can create a "connection" using the `connect()` function on the client side and the `accept()` function on the server side:
 
 ```rust
 // Client connection.
@@ -26,11 +31,11 @@ let conn = quiche::connect(Some(&server_name), &scid, &mut config)?;
 let conn = quiche::accept(&scid, None, &mut config)?;
 ```
 
-一个“连接”(`quiche::Connection`)可以用于进行数据包的收发以及数据流的收发。一方面，“连接”可以将数据包从 UDP socket 进行读取并且将数据打包发送到 socket 中；另一方面，应用可以使用“连接”进行通用的“流”的数据传输。
+Then we can use "connection" (`quiche::Connection`) for DTP block and packet processing.
 
-### 处理到来的数据包
+### Handling incoming packets
 
-使用“连接”的`recv()`函数，应用可以处理属于该“连接”的从网络传来的数据包:
+Using the `recv()` method of a "connection", an application can process packets from the network belonging to that "connection":
 
 ```rust
 loop {
@@ -52,11 +57,11 @@ loop {
 }
 ```
 
-DTP 协议会在接收到数据包之后对数据包进行处理，提取出其中的流数据并且等待应用调用接口以呈递数据。
+The DTP protocol processes the packets after they are received, extracts the block data and waits for the application to call the interface to get the payload.
 
-### 处理发送的数据包
+###  Handling outgoing packets
 
-DTP 是一个用户态传输协议，这意味着应用需要手动处理网络数据包的发送工作。要发送的数据包通过“连接”的`send()`函数进行处理：
+The packets to be sent are processed through the connection's `send()` function:
 
 ```rust
 loop {
@@ -78,17 +83,17 @@ loop {
 }
 ```
 
-“连接”会通过`send()`函数将要发送的数据打包后写入到提供的 buffer 中，应用则需要将该 buffer 中的数据写入 UDP socket 中。
+The "connection" will use the `send()` function to provide the packet to be sent and write it into the specified buffer, and the application needs to write the data in the buffer to the UDP socket.
 
-### 处理计时器
+### Handling the timer
 
-当数据包发送后，应用需要维护一个计时器(timer)来处理 DTP 协议中与时间有关的事件。应用可以使用“连接”的`timeout()`函数来获取下一个事件发生剩余的时间：
+After the packet is sent, the application needs to maintain a timer (timer) to process the time-related events in the DTP protocol. Applications can use the connection's `timeout()` method to get the time remaining until the next event occurs:
 
 ```rust
 let timeout = conn.timeout();
 ```
 
-应用需要提供对应操作系统或是网络处理框架的计时器(timer)实现。当计时器触发时，应用需要调用“连接”的`on_timeout()`函数。调用后该函数后可能有一些额外的数据包需要进行发送。
+The application needs to provide a timer implementation corresponding to the operating system or network processing framework. When the timer triggered, the application needs to call the `on_timeout()` function of "connection". There may be some packets that need to be sent after this function is called.
 
 ```rust
 // Timeout expired, handle it.
@@ -114,35 +119,26 @@ loop {
 }
 ```
 
-### 收发流数据
+### Sending and receiving block data
 
-#### 数据流的发送
+#### Sending of data blocks
 
-在完成了上述的传输框架后，“连接”会先后发送一些数据进行连接建立工作。此时应用即可进行应用数据的收发。
+After completing the above-mentioned steps, the "connection" will send some data successively to establish the connection. The application can send and receive application data after the connection is established successfully.
 
-数据可以使用`stream_send()`函数进行发送：
-
-```rust
-if conn.is_established() {
-    // Handshake completed, send some data on stream 0.
-    conn.stream_send(0, b"hello", true)?;
-}
-```
-
-DTP 还提供了`stream_send_full()`函数，使得用户可以指定某个数据块（对应一个流）所预期到达的“截止时间” (Deadline) 和“优先级” (Priority)。DTP 会根据提供的信息进行数据包的调度以达到最优的发送效果。所有等待时间超时的数据块将被丢弃。
+Data blocks can be sent using the `stream_send_full()` method. The user can specify the "Deadline", "Priority" (Priority) and "Depend Block" when a data block is expected to arrive. DTP will schedule data packets according to the provided information to achieve the good delivery results. Blocks whose wait time has expired their deadlines will be dropped:
 
 ```rust
 if conn.is_established() {
-    // Send a block of data with deadline 200ms and priority 1
+    // Send a block of data with deadline 200ms and priority 1, depend on no block
     conn.stream_send_full(0, b"a block of data", true, 200, 1, 0)?;
 }
 ```
 
-#### 数据流的接收
+#### Receiving of data blocks
 
-应用可以通过调用“连接”的`readable()`来得知一个“连接”中是否有可以读取的流。该函数返回一个流的迭代器，所有可以读取数据的流都会被放入其中。
+Applications can find out if a "connection" has blocks that can be read by calling the "connection"'s `readable()`. This function returns an iterator of blocks where all blocks that can read data are placed.
 
-得知可以读取的流之后，应用便可以使用`stream_recv()`函数读取流中的数据：
+After knowing the blocks that can be read, the application can use the `stream_recv()` function to read the data in the block:
 
 ```rust
 if conn.is_established() {
@@ -156,117 +152,108 @@ if conn.is_established() {
 }
 ```
 
-## 在 C/C++ 中使用 DTP
+DTP is also compatible with quiche's original stream sending/receiving. See [quiche: Sending and receiving stream data](https://github.com/cloudflare/quiche#sending-and-receiving-stream-data) for details.
 
-DTP 有一个在 Rust 接口外简单包装的 [C 接口]，使得 DTP 可以比较简单地被整合入 C/C++ 应用（同样对于其他语言而言也可以使用 FFI 调用 C API）
+## C/C++ Support
 
-C API 和 Rust API 的设计相同，只是处理了 C 语言自身的一些限制。
+DTP has a [C API] that is simply wrapped around the Rust interface, making it relatively easy to integrate DTP into C/C++ applications (and also for other languages to use FFI to call C APIs).
 
-当运行`cargo build`时，项目会生成一个`libquiche.a`静态库。这是一个独立的库并且可以连接到 C/C++ 的应用当中。
+The C API follows the same design of the Rust one, modulo the constraints imposed by the C language itself.
 
-关于在 C/C++ 中使用 DTP 请参考 examples/ping-pong 中的样例代码。
+When running `cargo build`, the project generates a `libquiche.a` static library. This is a standalone library and can be linked into C/C++ applications.
 
-[C 接口]: https://github.com/STAR-Tsinghua/DTP/blob/main/include/quiche.h
+Please refer to the sample code in examples/ping-pong for using DTP in C/C++.
 
-## 环境安装
+[C API]: https://github.com/STAR-Tsinghua/DTP/blob/main/include/quiche.h
 
-目前确认正确运行的环境：
+## Building Requirements
 
-1. OS: Ubuntu 18.04/Ubuntu 20.04
+Tested environments and dependencies:
+
+1. OS: Ubuntu 18.04/20.04/22.04
 2. Docker: 20.10.5
 3. Rustc: 1.50.0
 4. go: 1.10.4 linux/amd64
 5. cmake: 3.10.2
 6. perl: v5.26.1
-7. gcc: 9.3.0
+7. gcc: 9.3.0, 10.3.0
 
-### 语言依赖
+### Images for compilation and implementation
 
-DTP 需要使用 Rust 和 Go 两个语言环境来完成编译过程。我们提供了一个 Debian:buster 版本的可用于编译可执行程序的镜像：`simonkorl0228/aitrans_build`可供使用。将整个仓库复制到镜像中即可正常进行编译。
+We provide a Debian:buster version of the image that can be used to build executable programs: `simonkorl0228/aitrans_build`. Copy the entire repository to the image to compile.
 
-如果需要一个基本的开发环境，可以使用 `simonkorl0228/dtp-docker` 镜像进行测试开发。该镜像采用 Ubuntu 镜像为基础，后续的版本号与 Ubuntu 镜像版本一致。
+If you need a basic development environment, you can use the `simonkorl0228/dtp-docker` image for test and development. This image is based on the Ubuntu image, and the subsequent version numbers are the same as the Ubuntu image version.
 
-#### Rust 工具链安装
+If you want to build your own environment, please refer to the following steps.
 
-Rust 工具链可按照[官方](https://www.rust-lang.org/)指示方法进行安装。
+### Rust toolchain installation
 
-大多数 Linux 操作系统可以用下面的方法进行安装：
+The Rust toolchain can be installed by following the [official](https://www.rust-lang.org/) instructions.
+
+Most Linux operating systems can install by the following ways:
 
 ```sh
 $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-#### Go 语言安装
+### Go language installation
 
-Go 的安装请参考[官网说明](https://golang.google.cn/doc/install) 。
+For the installation of Go, please refer to [Official Website Instructions](https://golang.google.cn/doc/install).
 
-#### 换源
+### Other dependencies
 
-中国大陆地区建议对 Rust 和 Go 进行换源，否则在编译过程中可能出现超时的问题。换源方法可以参考下面链接的内容。
-
-* Rust: https://mirrors.tuna.tsinghua.edu.cn/help/crates.io-index.git/
-* Go: https://blog.csdn.net/Kevin_lady/article/details/108700915
-
-### 其他依赖
-
-一些依赖的安装方法(以 Ubuntu18.04 为例)：
+Some dependencies' installation methods (take Ubuntu18.04 as an example):
 
 1. libev: `sudo apt install libev-dev`
 2. uthash: `sudo apt install uthash-dev`
 
-于此同时，本项目的采用了 git submodule 来管理部分组件，不要忘记进行同步。
+This project uses git submodule to manage some components, don't forget to synchronize.
 
 ```bash
 $ git submodule init
 $ git submodule update
 ```
 
-boringssl 库在国内 git 下载速度缓慢，可以通过 github 网页，点击进入 `deps/boringssl` 目录并且下载 `.zip` 文件。
+## Building
 
-**请注意，该方法可能会导致未知的编译问题。如果发现相关问题请直接使用 submodule 进行更新**
+After setting up the environment, you can use git to get the source code:
 
-## 样例程序说明
+```bash
+$ git clone --recursive https://github.com/STAR-Tsinghua/DTP
+```
 
-在 examples 目录下的 server.rs 与 client.rs 为 Rust 的样例程序，examples/ping-pong 目录下为 C 的样例程序。
+then build with cargo:
 
-Rust 样例程序使用 `cargo build --examples` 进行构建，在项目根目录下运行下面指令进行测试。
+```bash
+$ cargo build --release
+```
+
+The build result is in the target/release directory and contains three files: `libquiche.a` static library, `libquiche.so` dynamic library and `libquiche.rlib` Rust link library.
+
+Note: This project relies on [BoringSSL]. In order to compile this library, `cmake`, `go`, `perl` dependencies may be required. It may also require [NASM](https://www.nasm.us/) on Windows. See the [BoringSSL documentation](https://github.com/google/boringssl/blob/master/BUILDING.md) for more details.
+
+[BoringSSL]: https://boringssl.googlesource.com/boringssl/
+
+## Examples
+
+The server.rs and client.rs in the examples directory are Rust sample programs, and the examples/ping-pong directory is sample programs in C.
+
+The Rust sample programs are built using `cargo build --examples`, and run the following commands in the project root directory to try them.
 
 ```bash
 $ cargo run --example server
 $ cargo run --example client http://127.0.0.1:4433/hello_world --no-verify
 ```
 
-可在客户端侧接收到 `Hello World!` 。该测试程序执行了一个简单的 HTTP3 GET 操作，获取位于 examples/root 目录下的文件。
+`Hello World!` can be received on the client side. The test programs perform a simple HTTP3 GET operation to get the files located in the examples/root directory.
 
-在 examples/ping-pong 目录下则用 C 语言实现了一个简单示例，可到对应目录下查看运行方法。
+In the examples/ping-pong directory, a simple example is implemented in C language. The usage can be found in the corresponding directory.
 
-## 项目构建
+## More references
 
-项目需要 Rust 1.39 及以上进行构建。可以使用 [rustup](https://rustup.rs/) 获得 Rust 的最新稳定版本。
+* The DTP protocol is an extension of the QUIC protocol. You can refer to the QUIC protocol standards [RFC9000](https://www.rfc-editor.org/rfc/rfc9000.html) and [RFC9001](https://www.rfc-editor.org/rfc/rfc9001).
+* DTP is developed on the [quiche 0.2.0](https://github.com/cloudflare/quiche/tree/0.2.0) version, you can refer to related documents for more content.
 
-在设定好环境后，可以使用 git 获取源代码：
+* The `cargo doc` command can be used to generate help documentation to assist development work.
 
-```bash
-$ git clone --recursive https://github.com/STAR-Tsinghua/DTP
-```
-
-之后使用 cargo 构建：
-
-```bash
-$ cargo build --release
-```
-
-构建结果在 target/release 目录下，包含三个文件：`libquiche.a`静态库、`libquiche.so`动态库和`libquiche.rlib`Rust 链接库。
-
-注意：该项目依赖 [BoringSSL] 来完成加密握手环节。为了编译该库，可能需要`cmake`, `go`,`perl`的依赖。在 Windows 上可能还需要 [NASM](https://www.nasm.us/)。 可以查看[BoringSSL 文档](https://github.com/google/boringssl/blob/master/BUILDING.md) 了解更多细节。
-
-[BoringSSL]: https://boringssl.googlesource.com/boringssl/
-
-## 其他参考资料
-
-* DTP 协议是 QUIC 协议的拓展，可以参考 QUIC 协议的标准 [RFC9000](https://www.rfc-editor.org/rfc/rfc9000.html) 与 [RFC9001](https://www.rfc-editor.org/rfc/rfc9001)。
-* DTP 在 [quiche 0.2.0](https://github.com/cloudflare/quiche/tree/0.2.0) 版本上进行开发，可以参考相关文档了解相关内容。
-
-* 可以使用`cargo doc`命令生成帮助文档来辅助开发工作。
-
-* DTP 被用于了一些其他项目，例如“智能网络技术挑战赛”(AItrans)，其[官网](https://www.aitrans.online/)提供了部分对于 DTP 的介绍，有助于对 DTP 项目有初步的理解。
+* DTP is used in some other projects, such as "Intelligent Network Technology Challenge" (AItrans), its [official website](https://www.aitrans.online/) provides some introduction to DTP, which is helpful for preliminary understanding of DTP. We also held [Meet Deadline Requirements](https://github.com/AItransCompetition/Meet-Deadline-Requirements-Challenge) to explore the implementation of Deadline related algorithms. These projects provide container or simulator environments for exploration.

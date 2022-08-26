@@ -54,8 +54,8 @@ impl FecPacketNumbers {
     }
 
     pub fn get_delta(&self) -> Option<i8> {
-        if self.packet_number_lost.len() + self.packet_number_acked.len() <
-            self.m as usize + self.n as usize
+        if self.packet_number_lost.len() + self.packet_number_acked.len()
+            < self.m as usize + self.n as usize
         {
             return None;
         } else {
@@ -84,12 +84,13 @@ pub struct FecFrame {
     pub data: Vec<u8>,
 }
 
-impl std::fmt::Debug for FecFrame{
+impl std::fmt::Debug for FecFrame {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
             "FecFrame status: {:?}, data length: {}",
-            self.info, self.data.len()
+            self.info,
+            self.data.len()
         )?;
         Ok(())
     }

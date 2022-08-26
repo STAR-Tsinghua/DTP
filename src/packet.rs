@@ -810,8 +810,8 @@ impl PktNumWindow {
 
     fn upper(&self) -> u64 {
         self.lower
-            .saturating_add(std::mem::size_of::<u128>() as u64 * 8) -
-            1
+            .saturating_add(std::mem::size_of::<u128>() as u64 * 8)
+            - 1
     }
 }
 
