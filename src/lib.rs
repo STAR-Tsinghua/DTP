@@ -1623,7 +1623,7 @@ impl Connection {
                             &mut restored,
                             packet::Type::Short,
                         )?;
-                        // Remove ack illicited
+                        // Remove ack ellicited
 
                         self.process_frame(frame, epoch, now)?;
                     }
@@ -1648,6 +1648,7 @@ impl Connection {
             // FEC redundant packet
             // just advance the buffer.
             payload.get_bytes(payload.cap()).unwrap();
+            debug!("redundant FEC packet");
         }
 
         // Process acked frames.
@@ -3707,7 +3708,7 @@ impl Connection {
     /// set tail size threshold
     pub fn set_tail(&mut self, tail_size: u64) {
         if cfg!(feature = "fec") {
-            self.tail_size = Some(tail_size * 1303);
+            self.tail_size = Some(tail_size * 1350);
         } else {
             self.tail_size = None;
         }

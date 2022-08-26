@@ -92,6 +92,8 @@ static void flush_egress(struct ev_loop *loop, struct conn_io *conn_io) {
 
 static void recv_cb(EV_P_ ev_io *w, int revents) {
     static bool req_sent = false;
+    static bool hello_fin = false;
+    static bool string_fin = false;
 
     struct conn_io *conn_io = w->data;
 
@@ -177,8 +179,15 @@ static void recv_cb(EV_P_ ev_io *w, int revents) {
             printf("recv: %.*s", (int)recv_len, buf);
 
             if (fin) {
-                if (quiche_conn_close(conn_io->conn, true, 0, NULL, 0) < 0) {
-                    fprintf(stderr, "failed to close connection\n");
+                if (s == 4) {
+                    hello_fin = true;
+                } else if (s == 8) {
+                    string_fin = true;
+                }
+                if (hello_fin && string_fin) {
+                    if (quiche_conn_close(conn_io->conn, true, 0, NULL, 0) < 0) {
+                        fprintf(stderr, "failed to close connection\n");
+                    }
                 }
             }
         }
