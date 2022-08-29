@@ -93,9 +93,9 @@ impl Hystart {
     }
 
     pub fn in_lss(&self, epoch: packet::Epoch) -> bool {
-        self.enabled &&
-            epoch == packet::EPOCH_APPLICATION &&
-            self.lss_start_time().is_some()
+        self.enabled
+            && epoch == packet::EPOCH_APPLICATION
+            && self.lss_start_time().is_some()
     }
 
     #[allow(dead_code)]
@@ -132,10 +132,10 @@ impl Hystart {
 
             self.rtt_sample_count += 1;
 
-            if cwnd >= (LOW_CWND * max_datagram_size) &&
-                self.rtt_sample_count >= N_RTT_SAMPLE &&
-                self.current_round_min_rtt.is_some() &&
-                self.last_round_min_rtt.is_some()
+            if cwnd >= (LOW_CWND * max_datagram_size)
+                && self.rtt_sample_count >= N_RTT_SAMPLE
+                && self.current_round_min_rtt.is_some()
+                && self.last_round_min_rtt.is_some()
             {
                 // clamp(min_rtt_thresh, last_round_min_rtt/8,
                 // max_rtt_thresh)
@@ -146,8 +146,8 @@ impl Hystart {
                 let rtt_thresh = cmp::min(rtt_thresh, MAX_RTT_THRESH);
 
                 // Check if we can exit to LSS.
-                if self.current_round_min_rtt.unwrap() >=
-                    (self.last_round_min_rtt.unwrap() + rtt_thresh)
+                if self.current_round_min_rtt.unwrap()
+                    >= (self.last_round_min_rtt.unwrap() + rtt_thresh)
                 {
                     self.lss_start_time = Some(now);
                 }
@@ -174,8 +174,8 @@ impl Hystart {
 
         cwnd + cmp::min(
             pkt_size,
-            max_datagram_size * crate::cc::ABC_L -
-                cmp::min(bytes_acked, max_datagram_size * crate::cc::ABC_L),
+            max_datagram_size * crate::cc::ABC_L
+                - cmp::min(bytes_acked, max_datagram_size * crate::cc::ABC_L),
         ) / k as usize
     }
 

@@ -246,10 +246,7 @@
 //! [`send_response()`]: struct.Connection.html#method.send_response
 //! [`send_body()`]: struct.Connection.html#method.send_body
 
-use std::collections::{
-    HashMap,
-    VecDeque,
-};
+use std::collections::{HashMap, VecDeque};
 
 use crate::octets;
 
@@ -677,7 +674,7 @@ impl Connection {
     ) -> Result<()> {
         self.send_response_full(conn, stream_id, headers, fin, 200)
     }
-    
+
     /// Sends an HTTP/3 response on the specified stream.
     /// The response will be dropped after deadline due to DTP
     pub fn send_response_full(
@@ -786,8 +783,8 @@ impl Connection {
             return Err(Error::FrameUnexpected);
         }
 
-        let overhead = octets::varint_len(frame::DATA_FRAME_TYPE_ID) +
-            octets::varint_len(body.len() as u64);
+        let overhead = octets::varint_len(frame::DATA_FRAME_TYPE_ID)
+            + octets::varint_len(body.len() as u64);
 
         let stream_cap = conn.stream_capacity(stream_id)?;
 
@@ -1391,10 +1388,13 @@ impl Connection {
 
                 let has_body = !conn.stream_finished(stream_id);
 
-                return Ok((stream_id, Event::Headers {
-                    list: headers,
-                    has_body,
-                }));
+                return Ok((
+                    stream_id,
+                    Event::Headers {
+                        list: headers,
+                        has_body,
+                    },
+                ));
             },
 
             frame::Frame::Data { .. } => {

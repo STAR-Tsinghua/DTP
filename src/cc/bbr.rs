@@ -773,9 +773,9 @@ impl Minmax {
             value: meas,
         };
 
-        if self.samples[0].value == 0 ||
-            sample.value >= self.samples[0].value ||
-            sample.time - self.samples[2].time > self.window
+        if self.samples[0].value == 0
+            || sample.value >= self.samples[0].value
+            || sample.time - self.samples[2].time > self.window
         {
             self.minmax_reset(sample);
             return;
@@ -808,15 +808,15 @@ impl Minmax {
                 self.samples[1] = self.samples[2];
                 self.samples[2] = sample;
             }
-        } else if self.samples[1].time == self.samples[0].time &&
-            dt > self.window / 4
+        } else if self.samples[1].time == self.samples[0].time
+            && dt > self.window / 4
         {
             // We've passed a quarter of the window without a new sample
             // so take a 2nd choice from the 2nd quarter of the window.
             self.samples[2] = sample;
             self.samples[1] = sample;
-        } else if self.samples[2].time == self.samples[1].time &&
-            dt > self.window / 2
+        } else if self.samples[2].time == self.samples[1].time
+            && dt > self.window / 2
         {
             // We've passed half the window without finding a new sample
             // so take a 3rd choice from the last half of the window
@@ -1218,8 +1218,8 @@ impl BBR {
 
         if self
             .bbr_flags
-            .contains(BbrFlags::BBR_FLAG_FLEXIBLE_APP_LIMITED) &&
-            self.is_pipe_sufficiently_full(bytes_in_flight)
+            .contains(BbrFlags::BBR_FLAG_FLEXIBLE_APP_LIMITED)
+            && self.is_pipe_sufficiently_full(bytes_in_flight)
         {
             return;
         }
@@ -1317,26 +1317,26 @@ impl BBR {
     }
 
     fn should_extend_min_rtt_expiry(&mut self) -> bool {
-        if (self.bbr_flags &
-            (BbrFlags::BBR_FLAG_APP_LIMITED_SINCE_LAST_PROBE_RTT |
-                BbrFlags::BBR_FLAG_PROBE_RTT_DISABLED_IF_APP_LIMITED)) ==
-            (BbrFlags::BBR_FLAG_APP_LIMITED_SINCE_LAST_PROBE_RTT |
-                BbrFlags::BBR_FLAG_PROBE_RTT_DISABLED_IF_APP_LIMITED)
+        if (self.bbr_flags
+            & (BbrFlags::BBR_FLAG_APP_LIMITED_SINCE_LAST_PROBE_RTT
+                | BbrFlags::BBR_FLAG_PROBE_RTT_DISABLED_IF_APP_LIMITED))
+            == (BbrFlags::BBR_FLAG_APP_LIMITED_SINCE_LAST_PROBE_RTT
+                | BbrFlags::BBR_FLAG_PROBE_RTT_DISABLED_IF_APP_LIMITED)
         {
             // Extend the current min_rtt if we've been app limited recently.
             return true;
         }
 
         let increased_since_last_probe =
-            self.bbr_min_rtt_since_last_probe.as_micros() as f64 >
-                self.bbr_min_rtt.as_micros() as f64 * kSimilarMinRttThreshold;
+            self.bbr_min_rtt_since_last_probe.as_micros() as f64
+                > self.bbr_min_rtt.as_micros() as f64 * kSimilarMinRttThreshold;
 
-        if (self.bbr_flags &
-            (BbrFlags::BBR_FLAG_APP_LIMITED_SINCE_LAST_PROBE_RTT |
-                BbrFlags::BBR_FLAG_PROBE_RTT_SKIPPED_IF_SIMILAR_RTT)) ==
-            (BbrFlags::BBR_FLAG_APP_LIMITED_SINCE_LAST_PROBE_RTT |
-                BbrFlags::BBR_FLAG_PROBE_RTT_SKIPPED_IF_SIMILAR_RTT) &&
-            !increased_since_last_probe
+        if (self.bbr_flags
+            & (BbrFlags::BBR_FLAG_APP_LIMITED_SINCE_LAST_PROBE_RTT
+                | BbrFlags::BBR_FLAG_PROBE_RTT_SKIPPED_IF_SIMILAR_RTT))
+            == (BbrFlags::BBR_FLAG_APP_LIMITED_SINCE_LAST_PROBE_RTT
+                | BbrFlags::BBR_FLAG_PROBE_RTT_SKIPPED_IF_SIMILAR_RTT)
+            && !increased_since_last_probe
         {
             // Extend the current min_rtt if we've been app limited recently and
             // an rtt has been measured in that time that's less than
@@ -1353,21 +1353,21 @@ impl BBR {
                 self.bbr_flags =
                     self.bbr_flags | BbrFlags::BBR_FLAG_LAST_SAMPLE_APP_LIMITED;
             } else {
-                self.bbr_flags = self.bbr_flags &
-                    (!BbrFlags::BBR_FLAG_LAST_SAMPLE_APP_LIMITED);
+                self.bbr_flags = self.bbr_flags
+                    & (!BbrFlags::BBR_FLAG_LAST_SAMPLE_APP_LIMITED);
                 self.bbr_flags =
                     self.bbr_flags | BbrFlags::BBR_FLAG_HAS_NON_APP_LIMITED;
             }
 
             debug!("sample.rtt : {} ms", sample.rtt.as_millis());
-            if sample_min_rtt == Duration::from_micros(std::u64::MAX) ||
-                sample.rtt < sample_min_rtt
+            if sample_min_rtt == Duration::from_micros(std::u64::MAX)
+                || sample.rtt < sample_min_rtt
             {
                 sample_min_rtt = sample.rtt;
             }
 
-            if !sample.is_app_limited ||
-                sample.bandwidth.value > self.bbr_max_bandwidth.minmax_get()
+            if !sample.is_app_limited
+                || sample.bandwidth.value > self.bbr_max_bandwidth.minmax_get()
             {
                 debug!(
                     "minmax_upmax:sample.bandwidth.value={}",
@@ -1385,14 +1385,14 @@ impl BBR {
         self.bbr_min_rtt_since_last_probe =
             cmp::min(self.bbr_min_rtt_since_last_probe, sample_min_rtt);
 
-        let mut min_rtt_expired = self.bbr_min_rtt != Duration::from_micros(0) &&
-            (self.bbr_ack_state.ack_time >
-                self.bbr_min_rtt_timestamp + kMinRttExpiry);
+        let mut min_rtt_expired = self.bbr_min_rtt != Duration::from_micros(0)
+            && (self.bbr_ack_state.ack_time
+                > self.bbr_min_rtt_timestamp + kMinRttExpiry);
         // println!("min_rtt_expired: {}", min_rtt_expired);
 
-        if min_rtt_expired ||
-            sample_min_rtt < self.bbr_min_rtt ||
-            Duration::from_micros(0) == self.bbr_min_rtt
+        if min_rtt_expired
+            || sample_min_rtt < self.bbr_min_rtt
+            || Duration::from_micros(0) == self.bbr_min_rtt
         {
             if min_rtt_expired && self.should_extend_min_rtt_expiry() {
                 debug!(
@@ -1411,8 +1411,8 @@ impl BBR {
             self.bbr_min_rtt_timestamp = self.bbr_ack_state.ack_time;
             self.bbr_min_rtt_since_last_probe =
                 Duration::from_micros(std::u64::MAX);
-            self.bbr_flags = self.bbr_flags &
-                (!BbrFlags::BBR_FLAG_APP_LIMITED_SINCE_LAST_PROBE_RTT);
+            self.bbr_flags = self.bbr_flags
+                & (!BbrFlags::BBR_FLAG_APP_LIMITED_SINCE_LAST_PROBE_RTT);
         }
 
         return min_rtt_expired;
@@ -1433,14 +1433,15 @@ impl BBR {
                     self.bbr_current_round_trip_end = self.bbr_last_sent_packno;
                 }
             },
-            Bbr_recovery_state::BBR_RS_CONSERVATION =>
+            Bbr_recovery_state::BBR_RS_CONSERVATION => {
                 if is_round_start {
                     self.bbr_recovery_state = Bbr_recovery_state::BBR_RS_GROWTH;
-                },
+                }
+            },
             Bbr_recovery_state::BBR_RS_GROWTH => {
                 // Exit recovery if appropriate.
-                if !self.bbr_ack_state.has_losses &&
-                    self.bbr_ack_state.max_packno > self.bbr_end_recovery_at
+                if !self.bbr_ack_state.has_losses
+                    && self.bbr_ack_state.max_packno > self.bbr_end_recovery_at
                 {
                     self.bbr_recovery_state =
                         Bbr_recovery_state::BBR_RS_NOT_IN_RECOVERY;
@@ -1456,8 +1457,8 @@ impl BBR {
         // bandwidth is correct.
         let bytes_acked_interval =
             ack_time - self.bbr_aggregation_epoch_start_time;
-        let expected_bytes_acked = (self.bbr_max_bandwidth.minmax_get() as f64 *
-            bytes_acked_interval.as_micros() as f64)
+        let expected_bytes_acked = (self.bbr_max_bandwidth.minmax_get() as f64
+            * bytes_acked_interval.as_micros() as f64)
             as u64;
 
         // Reset the current aggregation epoch as soon as the ack arrival rate is
@@ -1492,9 +1493,9 @@ impl BBR {
         // pacing_gain * BDP.  Make sure that it actually reaches the target, as
         // long as there are no losses suggesting that the buffers are not able to
         // hold that much.
-        if self.bbr_pacing_gain > 1.0 &&
-            !self.bbr_ack_state.has_losses &&
-            prior_in_flight < self.get_target_cwnd(self.bbr_pacing_gain)
+        if self.bbr_pacing_gain > 1.0
+            && !self.bbr_ack_state.has_losses
+            && prior_in_flight < self.get_target_cwnd(self.bbr_pacing_gain)
         {
             should_advance_gain_cycling = false;
         }
@@ -1508,8 +1509,8 @@ impl BBR {
         // estimated BDP value earlier, conclude that the queue has been
         // successfully drained and exit this cycle early.
 
-        if self.bbr_pacing_gain < 1.0 &&
-            bytes_in_flight <= self.get_target_cwnd(1.0)
+        if self.bbr_pacing_gain < 1.0
+            && bytes_in_flight <= self.get_target_cwnd(1.0)
         {
             should_advance_gain_cycling = true;
         }
@@ -1520,10 +1521,10 @@ impl BBR {
             self.bbr_last_cycle_start = now;
             // Stay in low gain mode until the target BDP is hit.  Low gain mode
             // will be exited immediately when the target BDP is achieved.
-            if self.bbr_flags.contains(BbrFlags::BBR_FLAG_Drain_TO_TARGET) &&
-                self.bbr_pacing_gain < 1.0 &&
-                kPacingGain[self.bbr_cycle_current_offset] == 1.0 &&
-                bytes_in_flight > self.get_target_cwnd(1.0)
+            if self.bbr_flags.contains(BbrFlags::BBR_FLAG_Drain_TO_TARGET)
+                && self.bbr_pacing_gain < 1.0
+                && kPacingGain[self.bbr_cycle_current_offset] == 1.0
+                && bytes_in_flight > self.get_target_cwnd(1.0)
             {
                 return;
             }
@@ -1573,11 +1574,11 @@ impl BBR {
         }
 
         self.bbr_round_wo_bw_gain += 1;
-        if (self.bbr_round_wo_bw_gain >= self.bbr_num_startup_rtts) ||
-            (self
+        if (self.bbr_round_wo_bw_gain >= self.bbr_num_startup_rtts)
+            || (self
                 .bbr_flags
-                .contains(BbrFlags::BBR_FLAG_EXIT_STARTUP_ON_LOSS) &&
-                self.in_recovery())
+                .contains(BbrFlags::BBR_FLAG_EXIT_STARTUP_ON_LOSS)
+                && self.in_recovery())
         {
             assert!(self
                 .bbr_flags
@@ -1624,8 +1625,8 @@ impl BBR {
     fn maybe_exit_startup_or_drain(
         &mut self, now: Instant, bytes_in_flight: u64,
     ) {
-        if self.bbr_mode == BbrMode::StartUp &&
-            (self
+        if self.bbr_mode == BbrMode::StartUp
+            && (self
                 .bbr_flags
                 .contains(BbrFlags::BBR_FLAG_IS_AT_FULL_BANDWIDTH))
         {
@@ -1666,11 +1667,11 @@ impl BBR {
         let cwnd: u64;
         if self.bbr_mode == BbrMode::ProbeRtt {
             cwnd = self.get_probe_rtt_cwnd();
-        } else if self.in_recovery() &&
-            !(self
+        } else if self.in_recovery()
+            && !(self
                 .bbr_flags
-                .contains(BbrFlags::BBR_FLAG_RATE_BASED_STARTUP) &&
-                self.bbr_mode == BbrMode::StartUp)
+                .contains(BbrFlags::BBR_FLAG_RATE_BASED_STARTUP)
+                && self.bbr_mode == BbrMode::StartUp)
         {
             cwnd = cmp::min(self.bbr_cwnd, self.bbr_recovery_window);
         } else {
@@ -1691,11 +1692,11 @@ impl BBR {
         //         .contains(BbrFlags::BBR_FLAG_EXITING_QUIESCENCE),
         //     self.bbr_mode != BbrMode::ProbeRtt
         // );
-        if min_rtt_expired &&
-            !(self
+        if min_rtt_expired
+            && !(self
                 .bbr_flags
-                .contains(BbrFlags::BBR_FLAG_EXITING_QUIESCENCE)) &&
-            self.bbr_mode != BbrMode::ProbeRtt
+                .contains(BbrFlags::BBR_FLAG_EXITING_QUIESCENCE))
+            && self.bbr_mode != BbrMode::ProbeRtt
         {
             if self.in_slow_start() {
                 self.on_exit_startup(now);
@@ -1716,20 +1717,20 @@ impl BBR {
                 // is kMinimumCongestionWindow, but we allow an
                 // extra packet since QUIC checks CWND before
                 // sending a packet.
-                if bytes_in_flight <
-                    self.get_probe_rtt_cwnd() + kMaxOutgoingPacketSize
+                if bytes_in_flight
+                    < self.get_probe_rtt_cwnd() + kMaxOutgoingPacketSize
                 // kMaxOutgoingPackets = 1452
                 {
                     self.bbr_exit_probe_rtt_at = Some(now + kProbeRttTime);
-                    self.bbr_flags = self.bbr_flags &
-                        (!BbrFlags::BBR_FLAG_PROBE_RTT_ROUND_PASSED);
+                    self.bbr_flags = self.bbr_flags
+                        & (!BbrFlags::BBR_FLAG_PROBE_RTT_ROUND_PASSED);
                 }
             } else {
                 if is_round_start {
                     self.bbr_flags |= BbrFlags::BBR_FLAG_PROBE_RTT_ROUND_PASSED;
                 }
-                if now >= self.bbr_exit_probe_rtt_at.unwrap() &&
-                    (self
+                if now >= self.bbr_exit_probe_rtt_at.unwrap()
+                    && (self
                         .bbr_flags
                         .contains(BbrFlags::BBR_FLAG_PROBE_RTT_ROUND_PASSED))
                 {
@@ -1772,9 +1773,9 @@ impl BBR {
 
         // Pace at the rate of initial_window / RTT as soon as RTT measurements
         // are available.
-        if self.bbr_pacing_rate.bw_is_zero() &&
-            Duration::from_micros(0) !=
-                self.bbr_rtt_stats.rtt_stats_get_min_rtt()
+        if self.bbr_pacing_rate.bw_is_zero()
+            && Duration::from_micros(0)
+                != self.bbr_rtt_stats.rtt_stats_get_min_rtt()
         {
             debug!(
                 "bw is 0, init_win: {} * 8000_000 / self.min_rtt: {} = rate",
@@ -1790,12 +1791,12 @@ impl BBR {
 
         // Slow the pacing rate in STARTUP once loss has ever been detected.
         let has_ever_detected_loss: bool = self.bbr_end_recovery_at != 0;
-        if has_ever_detected_loss &&
-            (self.bbr_flags &
-                (BbrFlags::BBR_FLAG_SLOWER_STARTUP |
-                    BbrFlags::BBR_FLAG_HAS_NON_APP_LIMITED)) ==
-                (BbrFlags::BBR_FLAG_SLOWER_STARTUP |
-                    BbrFlags::BBR_FLAG_HAS_NON_APP_LIMITED)
+        if has_ever_detected_loss
+            && (self.bbr_flags
+                & (BbrFlags::BBR_FLAG_SLOWER_STARTUP
+                    | BbrFlags::BBR_FLAG_HAS_NON_APP_LIMITED))
+                == (BbrFlags::BBR_FLAG_SLOWER_STARTUP
+                    | BbrFlags::BBR_FLAG_HAS_NON_APP_LIMITED)
         {
             debug!("lost, bw_value * 1.5 = rate");
             self.bbr_pacing_rate = bw.bw_times(kStartupAfterLossGain);
@@ -1803,23 +1804,23 @@ impl BBR {
         }
 
         // Slow the pacing rate in STARTUP by the bytes_lost / CWND.
-        if startup_rate_reduction_multiplier_ != 0 &&
-            has_ever_detected_loss &&
-            (self
+        if startup_rate_reduction_multiplier_ != 0
+            && has_ever_detected_loss
+            && (self
                 .bbr_flags
                 .contains(BbrFlags::BBR_FLAG_HAS_NON_APP_LIMITED))
         {
             debug!("slow down target_rate: {} * ", target_rate.value);
             self.bbr_pacing_rate = target_rate.bw_times(
-                1.0 - (self.bbr_startup_bytes_lost as f64 *
-                    startup_rate_reduction_multiplier_ as f64 *
-                    1.0 /
-                    self.bbr_cwnd_gain),
+                1.0 - (self.bbr_startup_bytes_lost as f64
+                    * startup_rate_reduction_multiplier_ as f64
+                    * 1.0
+                    / self.bbr_cwnd_gain),
             );
             // Ensure the pacing rate doesn't drop below the startup growth target
             // times  the bandwidth estimate.
-            if self.bbr_pacing_rate.value <
-                bw.bw_times(kStartupGrowthTarget).value
+            if self.bbr_pacing_rate.value
+                < bw.bw_times(kStartupGrowthTarget).value
             {
                 debug!("starup growth rate 1.25, bw_value: {}", bw.value);
                 self.bbr_pacing_rate = bw.bw_times(kStartupGrowthTarget);
@@ -1888,8 +1889,8 @@ impl BBR {
         // grows the CWND towards |target_window| by only increasing it
         // |bytes_acked| at a time.
 
-        let add_bytes_acked = !FLAGS_quic_bbr_no_bytes_acked_in_startup_recovery ||
-            !self.in_recovery();
+        let add_bytes_acked = !FLAGS_quic_bbr_no_bytes_acked_in_startup_recovery
+            || !self.in_recovery();
         if self
             .bbr_flags
             .contains(BbrFlags::BBR_FLAG_IS_AT_FULL_BANDWIDTH)
@@ -1897,10 +1898,10 @@ impl BBR {
             debug!("timestamp: {} ms, BBR_FLAG_IS_AT_FULL_BANDWIDTH, self.bbr_cwnd = min(target_window: {}, self.bbr_cwnd: {} + bytes_acked: {})",
             now_time_ms, target_window, self.bbr_cwnd, bytes_acked);
             self.bbr_cwnd = cmp::min(target_window, self.bbr_cwnd + bytes_acked);
-        } else if add_bytes_acked &&
-            (self.bbr_cwnd_gain < target_window as f64 ||
-                self.bbr_bw_sampler.bw_sampler_total_acked() <
-                    self.bbr_init_cwnd)
+        } else if add_bytes_acked
+            && (self.bbr_cwnd_gain < target_window as f64
+                || self.bbr_bw_sampler.bw_sampler_total_acked()
+                    < self.bbr_init_cwnd)
         {
             // If the connection is not yet out of startup phase, do not decrease
             // the window.
@@ -1933,8 +1934,8 @@ impl BBR {
     ) {
         if (self
             .bbr_flags
-            .contains(BbrFlags::BBR_FLAG_RATE_BASED_STARTUP)) &&
-            self.bbr_mode == BbrMode::StartUp
+            .contains(BbrFlags::BBR_FLAG_RATE_BASED_STARTUP))
+            && self.bbr_mode == BbrMode::StartUp
         {
             return;
         }
@@ -1995,14 +1996,14 @@ impl BBR {
         assert!(self.bbr_flags.contains(BbrFlags::BBR_FLAG_IN_ACK));
         self.bbr_flags &= !BbrFlags::BBR_FLAG_IN_ACK;
 
-        bytes_acked = self.bbr_bw_sampler.bw_sampler_total_acked() -
-            self.bbr_ack_state.total_bytes_acked_before;
+        bytes_acked = self.bbr_bw_sampler.bw_sampler_total_acked()
+            - self.bbr_ack_state.total_bytes_acked_before;
 
         if self.bbr_ack_state.ack_bytes > 0 {
             // println!("enter ack bytes");
-            is_round_start = self.bbr_ack_state.max_packno >
-                self.bbr_current_round_trip_end ||
-                !(self.bbr_current_round_trip_end < 0b1 << (62 - 1)); // MAXIQUIC packet number
+            is_round_start = self.bbr_ack_state.max_packno
+                > self.bbr_current_round_trip_end
+                || !(self.bbr_current_round_trip_end < 0b1 << (62 - 1)); // MAXIQUIC packet number
 
             if is_round_start {
                 self.bbr_round_count += 1;
@@ -2022,8 +2023,8 @@ impl BBR {
             self.update_gain_cycle_phase(bytes_in_flight);
         }
 
-        if is_round_start &&
-            !(self
+        if is_round_start
+            && !(self
                 .bbr_flags
                 .contains(BbrFlags::BBR_FLAG_IS_AT_FULL_BANDWIDTH))
         {
@@ -2109,7 +2110,7 @@ impl Bandwidth {
 
 enum BwsFlags {
     // BwsConnAborted = 1 << 0,
-    BwsWarned     = 1 << 1,
+    BwsWarned = 1 << 1,
     BwsAppLimited = 1 << 2,
 }
 
@@ -2201,8 +2202,8 @@ impl BwSampler {
             total_bytes_sent: self.bws_total_sent,
             total_bytes_acked: self.bws_total_acked,
             total_bytes_lost: self.bws_total_lost,
-            is_app_limited: !(self.bws_flag & BwsFlags::BwsAppLimited as u64 ==
-                0),
+            is_app_limited: !(self.bws_flag & BwsFlags::BwsAppLimited as u64
+                == 0),
         };
         let state = BwpState {
             bwps_send_state,
@@ -2246,8 +2247,8 @@ impl BwSampler {
 
         // Exit app-limited phase once a packet that was sent while the connection
         // is not app-limited is acknowledged.
-        if (self.bws_flag & BwsFlags::BwsAppLimited as u64) != 0 &&
-            packet_out.po_packno > self.bws_end_of_app_limited_phase
+        if (self.bws_flag & BwsFlags::BwsAppLimited as u64) != 0
+            && packet_out.po_packno > self.bws_end_of_app_limited_phase
         {
             self.bws_flag &= !(BwsFlags::BwsAppLimited as u64);
             debug!(
@@ -2272,8 +2273,8 @@ impl BwSampler {
         // current send rate sample and use only the ack rate.
         let send_rate;
         if packet_out.po_sent > bwps_last_ack_sent_time {
-            let bytes = state.bwps_send_state.total_bytes_sent -
-                state.bwps_sent_at_last_ack;
+            let bytes = state.bwps_send_state.total_bytes_sent
+                - state.bwps_sent_at_last_ack;
             let usecs = packet_out.po_sent - bwps_last_ack_sent_time;
             send_rate = Bandwidth::bw_from_bytes_and_delta(
                 bytes,
@@ -2288,15 +2289,15 @@ impl BwSampler {
         // otherwise division by zero or integer underflow can occur.
         if ack_time <= state.bwps_last_ack_ack_time {
             self.bw_warn_once(
-                "Time of the previously acked packet (".to_owned() +
-                    &state
+                "Time of the previously acked packet (".to_owned()
+                    + &state
                         .bwps_last_ack_ack_time
                         .elapsed()
                         .as_micros()
-                        .to_string() +
-                    ") is larger than the ack time of the current packet (" +
-                    &ack_time.elapsed().as_micros().to_string() +
-                    ")",
+                        .to_string()
+                    + ") is larger than the ack time of the current packet ("
+                    + &ack_time.elapsed().as_micros().to_string()
+                    + ")",
             );
             // self.bws_ops_state.push(state);
             packet_out.po_bwp_state = None;
@@ -2511,11 +2512,9 @@ impl cc::CongestionControl for BBR {
     }
 
     fn on_packet_acked_cc(
-        &mut self, 
-        packet: &Sent, 
-        _srtt: Duration, _min_rtt: Duration, _latest_rtt: Duration,
-        app_limited: bool, _trace_id: &str,
-        _epoch: packet::Epoch, _lost_count: usize
+        &mut self, packet: &Sent, _srtt: Duration, _min_rtt: Duration,
+        _latest_rtt: Duration, app_limited: bool, _trace_id: &str,
+        _epoch: packet::Epoch, _lost_count: usize,
     ) {
         self.bbr_bytes_in_flight -= packet.size as u64; // TODO
 
@@ -2564,10 +2563,9 @@ impl cc::CongestionControl for BBR {
     }
 
     fn congestion_event(
-        &mut self,
-        _srtt: Duration, _time_sent: Instant, _now: Instant,
-        _trace_id: &str, _packet_id: u64,
-        _epoch: packet::Epoch, _lost_count: usize
+        &mut self, _srtt: Duration, _time_sent: Instant, _now: Instant,
+        _trace_id: &str, _packet_id: u64, _epoch: packet::Epoch,
+        _lost_count: usize,
     ) {
         // Start a new congestion event if packet was sent after the
         // start of the previous congestion recovery period.
@@ -2581,8 +2579,14 @@ impl cc::CongestionControl for BBR {
         //     std::cmp::max(self.congestion_window, cc::MINIMUM_WINDOW);
         // self.ssthresh = self.congestion_window;
         // }
-        debug!("timestamp= {:?} {:?}",time::SystemTime::now()
-        .duration_since(time::SystemTime::UNIX_EPOCH).unwrap().as_millis(), self);
+        debug!(
+            "timestamp= {:?} {:?}",
+            time::SystemTime::now()
+                .duration_since(time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            self
+        );
     }
 
     fn cc_bbr_begin_ack(&mut self, ack_time: Instant) {
@@ -2593,8 +2597,14 @@ impl cc::CongestionControl for BBR {
     fn cc_bbr_end_ack(&mut self) {
         debug!("enter bbr_end_ack");
         self.bbr_end_ack(self.bbr_bytes_in_flight);
-        debug!("timestamp= {:?} {:?}",time::SystemTime::now()
-        .duration_since(time::SystemTime::UNIX_EPOCH).unwrap().as_millis(), self);
+        debug!(
+            "timestamp= {:?} {:?}",
+            time::SystemTime::now()
+                .duration_since(time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            self
+        );
     }
 
     fn pacing_rate(&self) -> u64 {

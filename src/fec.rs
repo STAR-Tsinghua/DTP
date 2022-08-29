@@ -53,8 +53,8 @@ impl FecPacketNumbers {
     }
 
     pub fn get_delta(&self) -> Option<i8> {
-        if self.packet_number_lost.len() + self.packet_number_acked.len() <
-            self.m as usize + self.n as usize
+        if self.packet_number_lost.len() + self.packet_number_acked.len()
+            < self.m as usize + self.n as usize
         {
             return None;
         } else {
@@ -83,12 +83,13 @@ pub struct FecFrame {
     pub data: Vec<u8>,
 }
 
-impl std::fmt::Debug for FecFrame{
+impl std::fmt::Debug for FecFrame {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
             "FecFrame status: {:?}, data length: {}",
-            self.info, self.data.len()
+            self.info,
+            self.data.len()
         )?;
         Ok(())
     }
@@ -96,7 +97,9 @@ impl std::fmt::Debug for FecFrame{
 
 pub trait FecAlgorithm {
     fn encode(&self, v: &mut Vec<Vec<u8>>) -> Result<(), &'static str>;
-    fn reconstruct_data(&self, shards: &mut Vec<Option<Vec<u8>>>) -> Result<(), &'static str>;
+    fn reconstruct_data(
+        &self, shards: &mut Vec<Option<Vec<u8>>>,
+    ) -> Result<(), &'static str>;
     fn verify(&self, shards: &Vec<Vec<u8>>) -> Result<bool, &'static str>;
 }
 
@@ -105,16 +108,13 @@ pub trait FecAlgorithm {
 #[allow(dead_code)]
 pub struct RSFec {
     m: usize,
-    n: usize
+    n: usize,
 }
 
 #[cfg(not(feature = "fec"))]
 impl RSFec {
     pub fn new(m: usize, n: usize) -> Result<RSFec, &'static str> {
-        return Ok(RSFec{
-            m,
-            n
-        });
+        return Ok(RSFec { m, n });
     }
 }
 
@@ -123,7 +123,9 @@ impl FecAlgorithm for RSFec {
     fn encode(&self, _v: &mut Vec<Vec<u8>>) -> Result<(), &'static str> {
         return Ok(());
     }
-    fn reconstruct_data(&self, _shards: &mut Vec<Option<Vec<u8>>>) -> Result<(), &'static str> {
+    fn reconstruct_data(
+        &self, _shards: &mut Vec<Option<Vec<u8>>>,
+    ) -> Result<(), &'static str> {
         return Ok(());
     }
     fn verify(&self, _shards: &Vec<Vec<u8>>) -> Result<bool, &'static str> {
@@ -135,28 +137,29 @@ impl FecAlgorithm for RSFec {
 use reed_solomon_erasure::galois_8::ReedSolomon;
 #[cfg(feature = "fec")]
 pub struct RSFec {
-    r: Box<ReedSolomon>
+    r: Box<ReedSolomon>,
 }
 #[cfg(feature = "fec")]
 impl RSFec {
     pub fn new(m: usize, n: usize) -> Result<Self, &'static str> {
-        Ok(
-            RSFec {
-                r: Box::new(ReedSolomon::new(m, n).unwrap())
-            }
-        )
+        Ok(RSFec {
+            r: Box::new(ReedSolomon::new(m, n).unwrap()),
+        })
     }
 }
 #[cfg(feature = "fec")]
 impl FecAlgorithm for RSFec {
-    
-    fn encode(&self, filled_shards: &mut Vec<Vec<u8>>) -> Result<(), &'static str> {
+    fn encode(
+        &self, filled_shards: &mut Vec<Vec<u8>>,
+    ) -> Result<(), &'static str> {
         match self.r.encode(filled_shards) {
             Ok(()) => return Ok(()),
             Err(_) => return Err("error in RS fec encode"),
         };
     }
-    fn reconstruct_data(&self, shards: &mut Vec<Option<Vec<u8>>>) -> Result<(), &'static str> {
+    fn reconstruct_data(
+        &self, shards: &mut Vec<Option<Vec<u8>>>,
+    ) -> Result<(), &'static str> {
         match self.r.reconstruct_data(shards) {
             Ok(()) => return Ok(()),
             Err(_) => return Err("error in RS fec reconstruct."),
@@ -185,9 +188,7 @@ impl FecGroup {
         FecGroup {
             info,
             shard_size,
-            r: Box::new(
-                RSFec::new(info.m as usize, info.n as usize).unwrap()
-            ),
+            r: Box::new(RSFec::new(info.m as usize, info.n as usize).unwrap()),
             shards: vec![None; info.m as usize + info.n as usize],
             next_index: 0,
             restored: false,

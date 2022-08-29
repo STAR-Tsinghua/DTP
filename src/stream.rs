@@ -32,16 +32,13 @@ use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
-use std::time::{
-    Instant,
-    SystemTime,
-};
+use std::time::{Instant, SystemTime};
 
+use crate::ranges;
+use crate::scheduler::{DynScheduler, Scheduler};
 use crate::Config;
 use crate::Error;
 use crate::Result;
-use crate::ranges;
-use crate::scheduler::{Scheduler, DynScheduler};
 
 const MAX_WRITE_SIZE: usize = 1000;
 
@@ -142,7 +139,9 @@ pub struct StreamMap {
 }
 
 impl StreamMap {
-    pub fn new(max_streams_bidi: u64, max_streams_uni: u64, config: &Config) -> StreamMap {
+    pub fn new(
+        max_streams_bidi: u64, max_streams_uni: u64, config: &Config,
+    ) -> StreamMap {
         StreamMap {
             local_max_streams_bidi: max_streams_bidi,
             local_max_streams_bidi_next: max_streams_bidi,
@@ -221,15 +220,16 @@ impl StreamMap {
                     ),
 
                     // Remotely-initiated unidirectional stream.
-                    (false, false) =>
-                        (local_params.initial_max_stream_data_uni, 0),
+                    (false, false) => {
+                        (local_params.initial_max_stream_data_uni, 0)
+                    },
                 };
 
                 // Enforce stream count limits.
                 match (is_local(id, is_server), is_bidi(id)) {
                     (true, true) => {
-                        if self.local_opened_streams_bidi >=
-                            self.peer_max_streams_bidi
+                        if self.local_opened_streams_bidi
+                            >= self.peer_max_streams_bidi
                         {
                             return Err(Error::StreamLimit);
                         }
@@ -238,8 +238,8 @@ impl StreamMap {
                     },
 
                     (true, false) => {
-                        if self.local_opened_streams_uni >=
-                            self.peer_max_streams_uni
+                        if self.local_opened_streams_uni
+                            >= self.peer_max_streams_uni
                         {
                             return Err(Error::StreamLimit);
                         }
@@ -248,8 +248,8 @@ impl StreamMap {
                     },
 
                     (false, true) => {
-                        if self.peer_opened_streams_bidi >=
-                            self.local_max_streams_bidi
+                        if self.peer_opened_streams_bidi
+                            >= self.local_max_streams_bidi
                         {
                             return Err(Error::StreamLimit);
                         }
@@ -258,8 +258,8 @@ impl StreamMap {
                     },
 
                     (false, false) => {
-                        if self.peer_opened_streams_uni >=
-                            self.local_max_streams_uni
+                        if self.peer_opened_streams_uni
+                            >= self.local_max_streams_uni
                         {
                             return Err(Error::StreamLimit);
                         }
@@ -335,8 +335,14 @@ impl StreamMap {
                 let block = self.get_block(id);
                 peek_blocks_vec.push(block);
             }
-            
-            self.scheduler.peek_through_flushable(&mut peek_blocks_vec, bandwidth, rtt, next_packet_id, current_time);
+
+            self.scheduler.peek_through_flushable(
+                &mut peek_blocks_vec,
+                bandwidth,
+                rtt,
+                next_packet_id,
+                current_time,
+            );
 
             for i in (0..self.flushable.len()).rev() {
                 let &id = self.flushable.get(i).unwrap();
@@ -346,7 +352,13 @@ impl StreamMap {
                 //     stream.send.start_instant.unwrap().elapsed().as_millis();
                 // create block structure for C++
                 let block = self.get_block(id);
-                if self.scheduler.should_drop_block(&block, bandwidth, rtt, next_packet_id, current_time) {
+                if self.scheduler.should_drop_block(
+                    &block,
+                    bandwidth,
+                    rtt,
+                    next_packet_id,
+                    current_time,
+                ) {
                     self.cancel_block(id)?;
                     // Block canceled, so non-flushable
                     trace!(
@@ -589,17 +601,17 @@ impl StreamMap {
     /// Returns true if the max bidirectional streams count needs to be updated
     /// by sending a MAX_STREAMS frame to the peer.
     pub fn should_update_max_streams_bidi(&self) -> bool {
-        self.local_max_streams_bidi_next != self.local_max_streams_bidi &&
-            self.local_max_streams_bidi_next / 2 >
-                self.local_max_streams_bidi - self.peer_opened_streams_bidi
+        self.local_max_streams_bidi_next != self.local_max_streams_bidi
+            && self.local_max_streams_bidi_next / 2
+                > self.local_max_streams_bidi - self.peer_opened_streams_bidi
     }
 
     /// Returns true if the max unidirectional streams count needs to be updated
     /// by sending a MAX_STREAMS frame to the peer.
     pub fn should_update_max_streams_uni(&self) -> bool {
-        self.local_max_streams_uni_next != self.local_max_streams_uni &&
-            self.local_max_streams_uni_next / 2 >
-                self.local_max_streams_uni - self.peer_opened_streams_uni
+        self.local_max_streams_uni_next != self.local_max_streams_uni
+            && self.local_max_streams_uni_next / 2
+                > self.local_max_streams_uni - self.peer_opened_streams_uni
     }
 
     /// Returns the number of active streams in the map.
@@ -664,9 +676,9 @@ impl Stream {
     /// Returns true if the stream has enough flow control capacity to be
     /// written to, and is not finished.
     pub fn is_writable(&self) -> bool {
-        !self.send.shutdown &&
-            !self.send.is_fin() &&
-            self.send.off < self.send.max_data
+        !self.send.shutdown
+            && !self.send.is_fin()
+            && self.send.off < self.send.max_data
     }
 
     /// Returns true if the stream has data to send and is allowed to send at
@@ -1130,9 +1142,9 @@ impl RecvBuf {
     pub fn almost_full(&self) -> bool {
         // Send MAX_STREAM_DATA when the new limit is at least double the
         // amount of data that can be received before blocking.
-        self.fin_off.is_none() &&
-            self.max_data_next != self.max_data &&
-            self.max_data_next / 2 > self.max_data - self.len
+        self.fin_off.is_none()
+            && self.max_data_next != self.max_data
+            && self.max_data_next / 2 > self.max_data - self.len
     }
 
     /// Returns true if the receive-side of the stream is complete.
@@ -1395,10 +1407,10 @@ impl SendBuf {
         let mut out_len = max_data;
         let mut out_off = self.data.peek().map_or_else(|| out.off, RangeBuf::off);
 
-        while out_len > 0 &&
-            self.ready() &&
-            self.off() == out_off &&
-            self.off() < self.max_data
+        while out_len > 0
+            && self.ready()
+            && self.off() == out_off
+            && self.off() < self.max_data
         {
             let mut buf = match self.data.pop() {
                 Some(v) => v,

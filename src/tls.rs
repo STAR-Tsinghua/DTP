@@ -538,12 +538,15 @@ extern fn set_encryption_secrets(
 
     let space = match level {
         crypto::Level::Initial => &mut conn.pkt_num_spaces[packet::EPOCH_INITIAL],
-        crypto::Level::ZeroRTT =>
-            &mut conn.pkt_num_spaces[packet::EPOCH_APPLICATION],
-        crypto::Level::Handshake =>
-            &mut conn.pkt_num_spaces[packet::EPOCH_HANDSHAKE],
-        crypto::Level::OneRTT =>
-            &mut conn.pkt_num_spaces[packet::EPOCH_APPLICATION],
+        crypto::Level::ZeroRTT => {
+            &mut conn.pkt_num_spaces[packet::EPOCH_APPLICATION]
+        },
+        crypto::Level::Handshake => {
+            &mut conn.pkt_num_spaces[packet::EPOCH_HANDSHAKE]
+        },
+        crypto::Level::OneRTT => {
+            &mut conn.pkt_num_spaces[packet::EPOCH_APPLICATION]
+        },
     };
 
     let aead = match get_cipher_from_ptr(ssl) {
@@ -639,10 +642,12 @@ extern fn add_handshake_data(
     let space = match level {
         crypto::Level::Initial => &mut conn.pkt_num_spaces[packet::EPOCH_INITIAL],
         crypto::Level::ZeroRTT => unreachable!(),
-        crypto::Level::Handshake =>
-            &mut conn.pkt_num_spaces[packet::EPOCH_HANDSHAKE],
-        crypto::Level::OneRTT =>
-            &mut conn.pkt_num_spaces[packet::EPOCH_APPLICATION],
+        crypto::Level::Handshake => {
+            &mut conn.pkt_num_spaces[packet::EPOCH_HANDSHAKE]
+        },
+        crypto::Level::OneRTT => {
+            &mut conn.pkt_num_spaces[packet::EPOCH_APPLICATION]
+        },
     };
 
     if space.crypto_stream.send.push_slice(buf, false).is_err() {
@@ -724,8 +729,8 @@ extern fn select_alpn(
                 std::str::from_utf8(expected.as_slice())
             );
 
-            if expected.len() == proto.len() &&
-                expected.as_slice() == proto.as_ref()
+            if expected.len() == proto.len()
+                && expected.as_slice() == proto.as_ref()
             {
                 unsafe {
                     *out = expected.as_slice().as_ptr();

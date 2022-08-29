@@ -183,7 +183,14 @@ impl Recovery {
     ) {
         // Process fec group packet number list.
         if pkt.fec_info.group_id != 0 {
-            trace!("send: {} {} {} {} {}", pkt.fec_info.group_id, pkt.fec_info.m, pkt.fec_info.n, pkt.size, pkt.fec_info.index);
+            trace!(
+                "send: {} {} {} {} {}",
+                pkt.fec_info.group_id,
+                pkt.fec_info.m,
+                pkt.fec_info.n,
+                pkt.size,
+                pkt.fec_info.index
+            );
             let pns_group = self
                 .pns_in_fec_group
                 .entry(pkt.fec_info.group_id)
@@ -192,9 +199,15 @@ impl Recovery {
                     pkt.fec_info.n,
                 ));
             pns_group.packet_sent(pkt.fec_info.index, pkt.pkt_num);
-        }
-        else {
-            trace!("send: {} {} {} {} {}", pkt.fec_info.group_id, pkt.fec_info.m, pkt.fec_info.n, pkt.size, pkt.fec_info.index);
+        } else {
+            trace!(
+                "send: {} {} {} {} {}",
+                pkt.fec_info.group_id,
+                pkt.fec_info.m,
+                pkt.fec_info.n,
+                pkt.size,
+                pkt.fec_info.index
+            );
         }
         let ack_eliciting = pkt.ack_eliciting;
         let in_flight = pkt.in_flight;
@@ -428,8 +441,8 @@ impl Recovery {
                     latest_rtt
                 };
 
-                self.rttvar = self.rttvar.mul_f64(3.0 / 4.0) +
-                    sub_abs(srtt, adjusted_rtt).mul_f64(1.0 / 4.0);
+                self.rttvar = self.rttvar.mul_f64(3.0 / 4.0)
+                    + sub_abs(srtt, adjusted_rtt).mul_f64(1.0 / 4.0);
 
                 self.smoothed_rtt = Some(
                     srtt.mul_f64(7.0 / 8.0) + adjusted_rtt.mul_f64(1.0 / 8.0),
@@ -516,8 +529,8 @@ impl Recovery {
 
         for (_, unacked) in self.sent[epoch].range(..=largest_acked) {
             // Mark packet as lost, or set time when it should be marked.
-            if unacked.time <= lost_send_time ||
-                largest_acked >= unacked.pkt_num + PACKET_THRESHOLD
+            if unacked.time <= lost_send_time
+                || largest_acked >= unacked.pkt_num + PACKET_THRESHOLD
             {
                 if unacked.in_flight {
                     trace!(
@@ -535,8 +548,9 @@ impl Recovery {
                 let loss_time = match self.loss_time[epoch] {
                     None => unacked.time + loss_delay,
 
-                    Some(loss_time) =>
-                        cmp::min(loss_time, unacked.time + loss_delay),
+                    Some(loss_time) => {
+                        cmp::min(loss_time, unacked.time + loss_delay)
+                    },
                 };
 
                 self.loss_time[epoch] = Some(loss_time);
@@ -582,10 +596,10 @@ impl Recovery {
                                 } else {
                                     self.n = adjusted_n as u8;
                                 }
-                                self.m = (self.cc.pacing_rate() *
-                                    self.min_rtt.as_millis() as u64 /
-                                    8000 /
-                                    1350)
+                                self.m = (self.cc.pacing_rate()
+                                    * self.min_rtt.as_millis() as u64
+                                    / 8000
+                                    / 1350)
                                     .try_into()
                                     .unwrap_or(std::u8::MAX);
                                 debug!(
@@ -616,8 +630,8 @@ impl Recovery {
                         self.latest_rtt,
                         self.app_limited,
                         trace_id,
-                        epoch, 
-                        self.lost_count
+                        epoch,
+                        self.lost_count,
                     );
                 }
             }
@@ -687,7 +701,7 @@ impl Recovery {
                 trace_id,
                 largest_lost_pkt.pkt_num,
                 epoch,
-                self.lost_count
+                self.lost_count,
             );
 
             if self.in_persistent_congestion(&largest_lost_pkt) {

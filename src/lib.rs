@@ -277,7 +277,7 @@ use std::time;
 use std::pin::Pin;
 use std::str::FromStr;
 
-#[cfg(feature="interface")]
+#[cfg(feature = "interface")]
 extern {
     fn SolutionInit(init_cwnd: *mut u64, init_pacing_rate: *mut u64);
     fn SolutionRedundancy() -> libc::c_float;
@@ -286,14 +286,18 @@ extern {
 
 #[allow(unused_variables)]
 fn solution_init(init_cwnd: *mut u64, init_pacing_rate: *mut u64) {
-    #[cfg(feature="interface")]
-    unsafe{ SolutionInit(init_cwnd, init_pacing_rate) };
+    #[cfg(feature = "interface")]
+    unsafe {
+        SolutionInit(init_cwnd, init_pacing_rate)
+    };
 }
 
 #[warn(dead_code)]
 fn solution_ack_ratio() -> u64 {
     #[cfg(feature = "interface")]
-    unsafe { SolutionAckRatio() }
+    unsafe {
+        SolutionAckRatio()
+    }
     #[cfg(not(feature = "interface"))]
     4
 }
@@ -341,24 +345,24 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[repr(C)]
 pub enum Error {
     /// There is no more work to do.
-    Done               = -1,
+    Done = -1,
 
     /// The provided buffer is too short.
-    BufferTooShort     = -2,
+    BufferTooShort = -2,
 
     /// The provided packet cannot be parsed because its version is unknown.
-    UnknownVersion     = -3,
+    UnknownVersion = -3,
 
     /// The provided packet cannot be parsed because it contains an invalid
     /// frame.
-    InvalidFrame       = -4,
+    InvalidFrame = -4,
 
     /// The provided packet cannot be parsed.
-    InvalidPacket      = -5,
+    InvalidPacket = -5,
 
     /// The operation cannot be completed because the connection is in an
     /// invalid state.
-    InvalidState       = -6,
+    InvalidState = -6,
 
     /// The operation cannot be completed because the stream is in an
     /// invalid state.
@@ -368,25 +372,25 @@ pub enum Error {
     InvalidTransportParam = -8,
 
     /// A cryptographic operation failed.
-    CryptoFail         = -9,
+    CryptoFail = -9,
 
     /// The TLS handshake failed.
-    TlsFail            = -10,
+    TlsFail = -10,
 
     /// The peer violated the local flow control limits.
-    FlowControl        = -11,
+    FlowControl = -11,
 
     /// The peer violated the local stream limits.
-    StreamLimit        = -12,
+    StreamLimit = -12,
 
     /// The received data exceeds the stream's final size.
-    FinalSize          = -13,
+    FinalSize = -13,
 
     /// Error in congestion control.
-    CongestionControl  = -14,
+    CongestionControl = -14,
 
     /// Error in scheduler type
-    SchedulerType      = -15,
+    SchedulerType = -15,
 }
 
 impl Error {
@@ -436,7 +440,7 @@ impl std::convert::From<octets::BufferTooShortError> for Error {
 #[repr(C)]
 pub enum Shutdown {
     /// Stop receiving stream data.
-    Read  = 0,
+    Read = 0,
 
     /// Stop sending stream data.
     Write = 1,
@@ -758,16 +762,16 @@ impl Config {
             // eprintln!("{}", s);
         }
         // Always call `SolutionInit` to apply default block selection algorithm
-        // Otherwise C codes may run with random initialization 
+        // Otherwise C codes may run with random initialization
         // which will cause unexpected errors without warning
-        // TODO: implement default block selection algorithm 
+        // TODO: implement default block selection algorithm
         // TODO: with conditional compilation in stream.rs
         solution_init(&mut self.init_cwnd, &mut self.init_pacing_rate);
     }
 
     /// Set the type of stream scheduler by its name
-    /// 
-    /// Current Available: 
+    ///
+    /// Current Available:
     /// "Basic", "basic" for basic FIFO scheduler
     /// "DTP", "Dtp", "dtp" for DTP scheduler
     /// "C", "c" for C scheduler
@@ -778,7 +782,7 @@ impl Config {
         Ok(())
     }
     /// Set the type of stream scheduler
-    /// 
+    ///
     /// The default value is `quiche::SchedulerType::Dynamic`
     pub fn set_scheduler_type(&mut self, sche: SchedulerType) {
         self.scheduler_type = sche;
@@ -949,7 +953,6 @@ pub struct Connection {
 
     /// fec tail size
     tail_size: Option<u64>,
-
 }
 
 /// Creates a new server-side connection.
@@ -1100,9 +1103,9 @@ pub fn retry(
 /// Returns true if the given protocol version is supported.
 pub fn version_is_supported(version: u32) -> bool {
     match version {
-        PROTOCOL_VERSION |
-        PROTOCOL_VERSION_DRAFT24 |
-        PROTOCOL_VERSION_DRAFT23 => true,
+        PROTOCOL_VERSION
+        | PROTOCOL_VERSION_DRAFT24
+        | PROTOCOL_VERSION_DRAFT23 => true,
 
         _ => false,
     }
@@ -1164,7 +1167,7 @@ impl Connection {
             streams: stream::StreamMap::new(
                 config.local_transport_params.initial_max_streams_bidi,
                 config.local_transport_params.initial_max_streams_uni,
-                config
+                config,
             ),
 
             odcid: None,
@@ -1509,8 +1512,8 @@ impl Connection {
         // Select packet number space epoch based on the received packet's type.
         let epoch = hdr.ty.to_epoch()?;
 
-        let aead = if hdr.ty == packet::Type::ZeroRTT &&
-            self.pkt_num_spaces[epoch].crypto_0rtt_open.is_some()
+        let aead = if hdr.ty == packet::Type::ZeroRTT
+            && self.pkt_num_spaces[epoch].crypto_0rtt_open.is_some()
         {
             self.pkt_num_spaces[epoch]
                 .crypto_0rtt_open
@@ -1630,9 +1633,9 @@ impl Connection {
                 }
             }
         }
-         // Is this packet redundant to FEC ?
-        if hdr.fec_info.group_id == 0 ||
-            (hdr.fec_info.group_id != 0 && hdr.fec_info.index < hdr.fec_info.m)
+        // Is this packet redundant to FEC ?
+        if hdr.fec_info.group_id == 0
+            || (hdr.fec_info.group_id != 0 && hdr.fec_info.index < hdr.fec_info.m)
         {
             // If not, then process the frames normally
             while payload.cap() > 0 {
@@ -1983,10 +1986,14 @@ impl Connection {
         } else {
             // no FEC frame, go the normal path.
             // Create ACK frame.
-            if (self.pkt_num_spaces[epoch].ack_elicited ||
-                (!self.pkt_num_spaces[epoch].recv_pkt_need_ack.is_empty() &&
-                    pn % Connection::get_data_ack_ratio(self.init_data_ack_ratio) == 0)) &&
-                !is_closing
+            if (self.pkt_num_spaces[epoch].ack_elicited
+                || (!self.pkt_num_spaces[epoch].recv_pkt_need_ack.is_empty()
+                    && pn
+                        % Connection::get_data_ack_ratio(
+                            self.init_data_ack_ratio,
+                        )
+                        == 0))
+                && !is_closing
             {
                 let ack_delay =
                     self.pkt_num_spaces[epoch].largest_rx_pkt_time.elapsed();
@@ -2063,10 +2070,10 @@ impl Connection {
 
             if pkt_type == packet::Type::Short && !is_closing {
                 // Create HANDSHAKE_DONE frame.
-                if self.is_established() &&
-                    !self.handshake_done_sent &&
-                    self.is_server &&
-                    self.version >= PROTOCOL_VERSION_DRAFT25
+                if self.is_established()
+                    && !self.handshake_done_sent
+                    && self.is_server
+                    && self.version >= PROTOCOL_VERSION_DRAFT25
                 {
                     let frame = frame::Frame::HandshakeDone;
 
@@ -2221,9 +2228,9 @@ impl Connection {
             }
 
             // Create CRYPTO frame.
-            if self.pkt_num_spaces[epoch].crypto_stream.is_flushable() &&
-                left > frame::MAX_CRYPTO_OVERHEAD &&
-                !is_closing
+            if self.pkt_num_spaces[epoch].crypto_stream.is_flushable()
+                && left > frame::MAX_CRYPTO_OVERHEAD
+                && !is_closing
             {
                 let crypto_len = left - frame::MAX_CRYPTO_OVERHEAD;
                 let crypto_buf = self.pkt_num_spaces[epoch]
@@ -2243,17 +2250,18 @@ impl Connection {
             }
             // Create a single STREAM frame for the first stream that is
             // flushable.
-            if pkt_type == packet::Type::Short &&
-                self.max_tx_data > self.tx_data &&
-                left > frame::MAX_STREAM_OVERHEAD &&
-                !is_closing
+            if pkt_type == packet::Type::Short
+                && self.max_tx_data > self.tx_data
+                && left > frame::MAX_STREAM_OVERHEAD
+                && !is_closing
             {
                 // log network and cc stats
                 let stats = self.stats();
                 let rtt = stats.rtt.as_millis() as f64;
                 // let bandwidth = stats.cwnd as f64 / rtt; // kb/s or bytes/ms
 
-                let bandwidth = self.recovery.cc.pacing_rate() as f64 / 8.0 / 1024.0; // bps->KB/s
+                let bandwidth =
+                    self.recovery.cc.pacing_rate() as f64 / 8.0 / 1024.0; // bps->KB/s
                 let now_time_ms = match time::SystemTime::now()
                     .duration_since(time::SystemTime::UNIX_EPOCH)
                 {
@@ -2292,8 +2300,8 @@ impl Connection {
                             block_priority,
                             block_deadline,
                             // start_time: stream.send.start_time() as u64,
-                            start_time: (stream.send.start_time() as i128 -
-                                self.bct_offset)
+                            start_time: (stream.send.start_time() as i128
+                                - self.bct_offset)
                                 as u64,
                         };
                         if frame.wire_len() <= left {
@@ -2319,26 +2327,29 @@ impl Connection {
 
                     // If this stream belongs to a FEC group, then limit its max_len to the shard_size
                     // The packet will pad to the shard_size when the stream doesn't have enough data
-                    let max_len =
-                        if !self.fec.is_empty(){
-                            let fec_group = self.fec.get(&0).unwrap();
-                            cmp::min(
-                                fec_group.shard_size - payload_len - 1 - octets::varint_len(stream_id) - 8*2, // estimate the maximum size of the data frame to fit the FEC group size. This estimation will under estimate the capacity of the frame
-                                max_len
-                            )
-                        } else {
-                            max_len
-                        };
+                    let max_len = if !self.fec.is_empty() {
+                        let fec_group = self.fec.get(&0).unwrap();
+                        cmp::min(
+                            fec_group.shard_size
+                                - payload_len
+                                - 1
+                                - octets::varint_len(stream_id)
+                                - 8 * 2, // estimate the maximum size of the data frame to fit the FEC group size. This estimation will under estimate the capacity of the frame
+                            max_len,
+                        )
+                    } else {
+                        max_len
+                    };
 
                     let off = stream.send.off();
 
                     // Try to accurately account for the STREAM frame's overhead,
                     // such that we can fill as much of the packet buffer as
                     // possible.
-                    let overhead = 1 +
-                        octets::varint_len(stream_id) +
-                        octets::varint_len(off) +
-                        octets::varint_len(max_len as u64);
+                    let overhead = 1
+                        + octets::varint_len(stream_id)
+                        + octets::varint_len(off)
+                        + octets::varint_len(max_len as u64);
 
                     let max_len = match max_len.checked_sub(overhead) {
                         Some(v) => v,
@@ -2361,22 +2372,23 @@ impl Connection {
                     let mut temp_n = 0;
 
                     if self.fec.is_empty() {
-                        let solution_redundancy = 
-                            if self.tail_size.is_some() && self.tail_size != Some(0) {
-                                Connection::get_redundancy_rate(
-                                    &block,
-                                    self.init_redundancy_rate,
-                                    rtt,
-                                    bandwidth * 1024.0,
-                                    now_time_ms as u64,
-                                    self.recovery.lost_count,
-                                    self.recovery.total_pkt_nums
-                                )
-                            } else {
-                                0.0
-                            };
+                        let solution_redundancy = if self.tail_size.is_some()
+                            && self.tail_size != Some(0)
+                        {
+                            Connection::get_redundancy_rate(
+                                &block,
+                                self.init_redundancy_rate,
+                                rtt,
+                                bandwidth * 1024.0,
+                                now_time_ms as u64,
+                                self.recovery.lost_count,
+                                self.recovery.total_pkt_nums,
+                            )
+                        } else {
+                            0.0
+                        };
 
-                        if stream.send.len >= 1{
+                        if stream.send.len >= 1 {
                             temp_m = ((stream.send.len - 1) / 1350 + 1) as u8;
                             // ? why do we need to limit the max value of m ?
                             if temp_m >= 20 {
@@ -2384,21 +2396,34 @@ impl Connection {
                             }
                             temp_n = (temp_m as f32 * solution_redundancy) as u8;
 
-                            debug!("solution check: (temp_m, temp): ({}, {})", temp_m, temp_n);
+                            debug!(
+                                "solution check: (temp_m, temp): ({}, {})",
+                                temp_m, temp_n
+                            );
 
                             if temp_m == 0 || temp_n == 0 {
                                 temp_m = 0;
                                 temp_n = 0;
                             }
 
-                            debug!("fec check:{} {} {} {} {}", stream.send.block_size(), stream.send.len, solution_redundancy, temp_m, temp_n);
+                            debug!(
+                                "fec check:{} {} {} {} {}",
+                                stream.send.block_size(),
+                                stream.send.len,
+                                solution_redundancy,
+                                temp_m,
+                                temp_n
+                            );
                         }
                     }
                     // Decide whether to enable redundacy code feature
                     if let Some(tail_threshold) = self.tail_size {
                         // Add redundancy code for the last few blocks if given the number `tail_size` explicitly in app
                         if tail <= tail_threshold {
-                            debug!("tail: {}, tail_threshold: {}, set m, n: {}, {}", tail, tail_threshold, temp_m, temp_n);
+                            debug!(
+                                "tail: {}, tail_threshold: {}, set m, n: {}, {}",
+                                tail, tail_threshold, temp_m, temp_n
+                            );
                             m = temp_m;
                             n = temp_n;
                         }
@@ -2437,10 +2462,10 @@ impl Connection {
             }
 
             // Create PING for PTO probe.
-            if self.recovery.loss_probes[epoch] > 0 &&
-                !ack_eliciting &&
-                left >= 1 &&
-                !is_closing
+            if self.recovery.loss_probes[epoch] > 0
+                && !ack_eliciting
+                && left >= 1
+                && !is_closing
             {
                 let frame = frame::Frame::Ping;
 
@@ -2482,8 +2507,8 @@ impl Connection {
         // Pad payload so that it's always at least 4 bytes.
         // TODO Pad payload to the same size when this is the last stream buffer.
         // we can directly modify the payload min len
-        let payload_min_len = if pkt_type == packet::Type::Short &&
-            ((m != 0 && n != 0) || !self.fec.is_empty())
+        let payload_min_len = if pkt_type == packet::Type::Short
+            && ((m != 0 && n != 0) || !self.fec.is_empty())
         {
             if !self.fec.is_empty() {
                 let fec_group = self.fec.get(&0).unwrap();
@@ -2494,7 +2519,10 @@ impl Connection {
         } else {
             PAYLOAD_MIN_LEN
         };
-        debug!("payload len is {}, min length should be {}", payload_len, payload_min_len);
+        debug!(
+            "payload len is {}, min length should be {}",
+            payload_len, payload_min_len
+        );
         if payload_len < payload_min_len {
             let frame = frame::Frame::Padding {
                 len: payload_min_len - payload_len,
@@ -2554,8 +2582,16 @@ impl Connection {
             fec_group.info.index = fec_group.next_index;
             fec_group.next_index += 1;
 
-            debug!("fec group info: {:?}, data length: {}", fec_group.info, fec_group.shard_size);
-            debug!("payload_len {}, overhead {}, payload_len - overhead {}", payload_len, overhead, payload_len - overhead);
+            debug!(
+                "fec group info: {:?}, data length: {}",
+                fec_group.info, fec_group.shard_size
+            );
+            debug!(
+                "payload_len {}, overhead {}, payload_len - overhead {}",
+                payload_len,
+                overhead,
+                payload_len - overhead
+            );
             let (_, mut payload) = b.split_at(payload_offset)?;
             hdr.fec_info = fec_group.info;
             let fec_frame = fec::FecFrame {
@@ -2665,8 +2701,8 @@ impl Connection {
         &mut self, stream_id: u64, out: &mut [u8],
     ) -> Result<(usize, bool)> {
         // We can't read on our own unidirectional streams.
-        if !stream::is_bidi(stream_id) &&
-            stream::is_local(stream_id, self.is_server)
+        if !stream::is_bidi(stream_id)
+            && stream::is_local(stream_id, self.is_server)
         {
             return Err(Error::InvalidStreamState);
         }
@@ -2797,8 +2833,8 @@ impl Connection {
         priority: u64, depend_id: u64,
     ) -> Result<usize> {
         // We can't write on the peer's unidirectional streams.
-        if !stream::is_bidi(stream_id) &&
-            !stream::is_local(stream_id, self.is_server)
+        if !stream::is_bidi(stream_id)
+            && !stream::is_local(stream_id, self.is_server)
         {
             return Err(Error::InvalidStreamState);
         }
@@ -3202,7 +3238,7 @@ impl Connection {
             sent: self.sent_count,
             lost: self.recovery.lost_count,
             cwnd: self.recovery.cc.cwnd(),
-            rtt: self.recovery.rtt()
+            rtt: self.recovery.rtt(),
         }
     }
 
@@ -3312,12 +3348,12 @@ impl Connection {
         }
 
         // If there are flushable streams, use Application.
-        if self.is_established() &&
-            (self.should_update_max_data() ||
-                self.streams.should_update_max_streams_bidi() ||
-                self.streams.should_update_max_streams_uni() ||
-                self.streams.has_flushable() ||
-                self.streams.has_almost_full())
+        if self.is_established()
+            && (self.should_update_max_data()
+                || self.streams.should_update_max_streams_bidi()
+                || self.streams.should_update_max_streams_uni()
+                || self.streams.has_flushable()
+                || self.streams.has_almost_full())
         {
             return Ok(packet::EPOCH_APPLICATION);
         }
@@ -3407,8 +3443,8 @@ impl Connection {
                 start_time,
             } => {
                 // Peer can't send on our unidirectional streams.
-                if !stream::is_bidi(stream_id) &&
-                    stream::is_local(stream_id, self.is_server)
+                if !stream::is_bidi(stream_id)
+                    && stream::is_local(stream_id, self.is_server)
                 {
                     return Err(Error::InvalidStreamState);
                 }
@@ -3430,8 +3466,8 @@ impl Connection {
                 error_code,
             } => {
                 // Peer can't send on our unidirectional streams.
-                if !stream::is_bidi(stream_id) &&
-                    stream::is_local(stream_id, self.is_server)
+                if !stream::is_bidi(stream_id)
+                    && stream::is_local(stream_id, self.is_server)
                 {
                     return Err(Error::InvalidStreamState);
                 }
@@ -3472,8 +3508,8 @@ impl Connection {
 
             frame::Frame::StopSending { stream_id, .. } => {
                 // STOP_SENDING on a receive-only stream is a fatal error.
-                if !stream::is_local(stream_id, self.is_server) &&
-                    !stream::is_bidi(stream_id)
+                if !stream::is_local(stream_id, self.is_server)
+                    && !stream::is_bidi(stream_id)
                 {
                     return Err(Error::InvalidStreamState);
                 }
@@ -3504,8 +3540,8 @@ impl Connection {
 
             frame::Frame::Stream { stream_id, data } => {
                 // Peer can't send on our unidirectional streams.
-                if !stream::is_bidi(stream_id) &&
-                    stream::is_local(stream_id, self.is_server)
+                if !stream::is_bidi(stream_id)
+                    && stream::is_local(stream_id, self.is_server)
                 {
                     return Err(Error::InvalidStreamState);
                 }
@@ -3644,7 +3680,9 @@ impl Connection {
             },
 
             // can not be fec frame, processed outside of the function.
-            frame::Frame::Fec { .. } => error!("FEC shold be unreachable in process_frame"),
+            frame::Frame::Fec { .. } => {
+                error!("FEC shold be unreachable in process_frame")
+            },
         }
 
         Ok(())
@@ -3669,8 +3707,8 @@ impl Connection {
     /// This happens when the new max data limit is at least double the amount
     /// of data that can be received before blocking.
     fn should_update_max_data(&self) -> bool {
-        self.max_rx_data_next != self.max_rx_data &&
-            self.max_rx_data_next / 2 > self.max_rx_data - self.rx_data
+        self.max_rx_data_next != self.max_rx_data
+            && self.max_rx_data_next / 2 > self.max_rx_data - self.rx_data
     }
 
     /// Returns the idle timeout value.
@@ -3680,8 +3718,8 @@ impl Connection {
         // If the transport parameter is set to 0, then the respective endpoint
         // decided to disable the idle timeout. If both are disabled we should
         // not set any timeout.
-        if self.local_transport_params.max_idle_timeout == 0 &&
-            self.peer_transport_params.max_idle_timeout == 0
+        if self.local_transport_params.max_idle_timeout == 0
+            && self.peer_transport_params.max_idle_timeout == 0
         {
             return None;
         }
@@ -3724,21 +3762,20 @@ impl Connection {
         #[cfg(feature = "interface")]
         let ack_ratio = solution_ack_ratio();
 
-        return if ack_ratio > 0 {
-            ack_ratio
-        } else {
-            4
-        };
+        return if ack_ratio > 0 { ack_ratio } else { 4 };
     }
 
     // rtt: ms
     // pacing_rate: B/s
-    fn get_redundancy_rate(block: &stream::Block, rate: f32, rtt: f64, pacing_rate: f64, current_time: u64, loss_count: usize, total_pkt_nums: usize) -> f32 {
+    fn get_redundancy_rate(
+        block: &stream::Block, rate: f32, rtt: f64, pacing_rate: f64,
+        current_time: u64, loss_count: usize, total_pkt_nums: usize,
+    ) -> f32 {
         if cfg!(feature = "fec") {
             if cfg!(feature = "interface") {
                 #[cfg(feature = "interface")]
                 return unsafe { SolutionRedundancy() };
-                #[cfg(not(feature = "interface"))] 
+                #[cfg(not(feature = "interface"))]
                 return 0.0;
             } else {
                 let waiting_time = current_time - block.block_create_time; // millis
@@ -3750,11 +3787,13 @@ impl Connection {
                 // deadline is in millis, current time is in micros
                 if (remaining_time as f64) < rtt * 2.0 {
                     return rate;
-                } else if (block.remaining_size as f64 / remaining_time as f64) * 
-                    (1.0 + ((loss_count as f64 / total_pkt_nums as f64))) * 8.0 < pacing_rate {
+                } else if (block.remaining_size as f64 / remaining_time as f64)
+                    * (1.0 + (loss_count as f64 / total_pkt_nums as f64))
+                    * 8.0
+                    < pacing_rate
+                {
                     return rate;
-                }
-                else {
+                } else {
                     return 0.0;
                 }
             }
@@ -3785,7 +3824,6 @@ pub struct Stats {
 
     /// The size in bytes of the connection's congestion window.
     pub cwnd: usize,
-
 }
 
 impl std::fmt::Debug for Stats {
@@ -4349,8 +4387,8 @@ pub mod testing {
 
         hdr.to_bytes(&mut b)?;
 
-        let payload_len = frames.iter().fold(0, |acc, x| acc + x.wire_len()) +
-            space.overhead().unwrap();
+        let payload_len = frames.iter().fold(0, |acc, x| acc + x.wire_len())
+            + space.overhead().unwrap();
 
         if pkt_type != packet::Type::Short {
             let len = pn_len + payload_len;
@@ -5848,13 +5886,13 @@ mod fec;
 mod ffi;
 mod frame;
 pub mod h3;
-mod ntp;
 mod minmax;
+mod ntp;
 mod octets;
 mod packet;
 mod rand;
 mod ranges;
 mod recovery;
+mod scheduler;
 mod stream;
 mod tls;
-mod scheduler;

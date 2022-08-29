@@ -68,7 +68,7 @@ struct Client {
 
     partial_responses: HashMap<u64, PartialResponse>,
 
-    stream_id: u64
+    stream_id: u64,
 }
 
 type ClientMap = HashMap<Vec<u8>, (net::SocketAddr, Client)>;
@@ -320,7 +320,7 @@ fn main() {
                 let client = Client {
                     conn,
                     partial_responses: HashMap::new(),
-                    stream_id: 1u64
+                    stream_id: 1u64,
                 };
 
                 clients.insert(scid.to_vec(), (src, client));
@@ -529,16 +529,17 @@ fn handle_stream(client: &mut Client, stream_id: u64, buf: &[u8], root: &str) {
             stream_id
         );
 
-        let written = match conn.stream_send_full(stream_id, &body, true, 100, 0, 0) {
-            Ok(v) => v,
+        let written =
+            match conn.stream_send_full(stream_id, &body, true, 100, 0, 0) {
+                Ok(v) => v,
 
-            Err(quiche::Error::Done) => 0,
+                Err(quiche::Error::Done) => 0,
 
-            Err(e) => {
-                error!("{} stream send failed {:?}", conn.trace_id(), e);
-                return;
-            },
-        };
+                Err(e) => {
+                    error!("{} stream send failed {:?}", conn.trace_id(), e);
+                    return;
+                },
+            };
 
         if written < body.len() {
             let response = PartialResponse { body, written };
