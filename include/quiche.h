@@ -34,6 +34,15 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 
+struct Block {
+  uint64_t block_id;
+  uint64_t block_deadline; // ms
+  uint64_t block_priority;
+  uint64_t block_create_time; // ms
+  uint64_t block_size;        // Bytes
+  uint64_t remaining_size;    // Bytes
+};
+
 // QUIC transport API.
 //
 
@@ -257,6 +266,20 @@ ssize_t quiche_conn_recv(quiche_conn *conn, uint8_t *buf, size_t buf_len);
 
 // Writes a single QUIC packet to be sent to the peer.
 ssize_t quiche_conn_send(quiche_conn *conn, uint8_t *out, size_t out_len);
+
+// Writes a single QUIC packet to be sent to the peer.
+// And returns the blocks(streams) in the packet
+ssize_t quiche_conn_send_with_blocks(quiche_conn *conn, uint8_t *out, size_t out_len,
+                           struct Block** stream_blocks_ptr, 
+                           size_t* stream_blocks_capacity,
+                           size_t* stream_blocks_num
+                           );
+
+// free blocks vector from send_with_blocks
+void free_stream_blocks(
+    struct Block* stream_blocks_ptr, 
+    size_t stream_blocks_capacity, 
+    size_t stream_blocks_num);
 
 // Buffer holding data at a specific offset.
 typedef struct RangeBuf quiche_rangebuf;

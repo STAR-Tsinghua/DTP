@@ -2673,6 +2673,953 @@ impl Connection {
         Ok(written)
     }
 
+    /// Writes a single QUIC packet to be sent to the peer.
+    /// and returns the blocks in the packet.
+    ///
+    /// On success the number of bytes written to the output buffer is
+    /// returned, or [`Done`] if there was nothing to write.
+    ///
+    /// The application should call `send()` multiple times until [`Done`] is
+    /// returned, indicating that there are no more packets to send. It is
+    /// recommended that `send()` be called in the following cases:
+    ///
+    ///  * When the application receives QUIC packets from the peer (that is,
+    ///    any time [`recv()`] is also called).
+    ///
+    ///  * When the connection timer expires (that is, any time [`on_timeout()`]
+    ///    is also called).
+    ///
+    ///  * When the application sends data to the peer (for examples, any time
+    ///    [`stream_send()`] or [`stream_shutdown()`] are called).
+    ///
+    /// [`Done`]: enum.Error.html#variant.Done
+    /// [`recv()`]: struct.Connection.html#method.recv
+    /// [`on_timeout()`]: struct.Connection.html#method.on_timeout
+    /// [`stream_send()`]: struct.Connection.html#method.stream_send
+    /// [`stream_shutdown()`]: struct.Connection.html#method.stream_shutdown
+    ///
+    /// ## Examples:
+    ///
+    /// ```no_run
+    /// # let mut out = [0; 512];
+    /// # let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    /// # let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION)?;
+    /// # let scid = [0xba; 16];
+    /// # let mut conn = quiche::accept(&scid, None, &mut config)?;
+    /// loop {
+    ///     let write = match conn.send(&mut out) {
+    ///         Ok(v) => v,
+    ///
+    ///         Err(quiche::Error::Done) => {
+    ///             // Done writing.
+    ///             break;
+    ///         },
+    ///
+    ///         Err(e) => {
+    ///             // An error occurred, handle it.
+    ///             break;
+    ///         },
+    ///     };
+    ///
+    ///     socket.send(&out[..write]).unwrap();
+    /// }
+    /// # Ok::<(), quiche::Error>(())
+    /// ```
+    pub fn send_with_blocks(&mut self, out: &mut [u8], stream_blocks: &mut Option<Vec<crate::stream::Block>>) -> Result<usize> {
+        let mut now = time::Instant::now();
+
+        if out.is_empty() {
+            return Err(Error::BufferTooShort);
+        }
+
+        if self.draining_timer.is_some() {
+            trace!("send: self.draining_timer.is_some()");
+            return Err(Error::Done);
+        }
+
+        // If the Initial secrets have not been derived yet, there's no point
+        // in trying to send a packet, so return early.
+        if !self.derived_initial_secrets {
+            trace!("send: !self.derived_initial_secrets");
+            return Err(Error::Done);
+        }
+
+        let is_closing = self.error.is_some() || self.app_error.is_some();
+
+        if !is_closing {
+            self.do_handshake()?;
+        }
+
+        // Use max_packet_size as sent by the peer, except during the handshake
+        // when we haven't parsed transport parameters yet, so use a default
+        // value then.
+        let max_pkt_len = if self.is_established() {
+            // We cap the maximum packet size to 16KB or so, so that it can be
+            // always encoded with a 2-byte varint.
+            cmp::min(16383, self.peer_transport_params.max_packet_size) as usize
+        } else {
+            // Allow for 1200 bytes (minimum QUIC packet size) during the
+            // handshake.
+            1200
+        };
+
+        // Cap output buffer to respect peer's max_packet_size limit.
+        let avail = cmp::min(max_pkt_len, out.len());
+
+        let mut b = octets::Octets::with_slice(&mut out[..avail]);
+
+        let epoch = self.write_epoch()?;
+
+        let pkt_type = packet::Type::from_epoch(epoch);
+
+        // Process lost frames.
+        for lost in self.recovery.lost[epoch].drain(..) {
+            match lost {
+                frame::Frame::Crypto { data } => {
+                    self.pkt_num_spaces[epoch].crypto_stream.send.push(data)?;
+                },
+
+                frame::Frame::BlockInfo { stream_id, .. } => {
+                    let stream = match self.streams.get_mut(stream_id) {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    stream.send.info_frame_lost();
+                },
+
+                frame::Frame::ResetStream { .. } => {
+                    // todo: process ResetStream Frame
+                },
+
+                frame::Frame::Stream { stream_id, data } => {
+                    let stream = match self.streams.get_mut(stream_id) {
+                        Some(v) => v,
+
+                        None => continue,
+                    };
+
+                    // TODO: due to a packet loss edge case the following could
+                    // go negative, though it's not clear why, so will need to
+                    // figure it out.
+                    self.tx_data = self.tx_data.saturating_sub(data.len() as u64);
+
+                    let was_flushable = stream.is_flushable();
+
+                    let empty_fin = data.is_empty() && data.fin();
+
+                    stream.send.push(data)?;
+
+                    // If the stream is now flushable push it to the flushable
+                    // queue, but only if it wasn't already queued.
+                    //
+                    // Consider the stream flushable also when we are sending a
+                    // zero-length frame that has the fin flag set.
+                    if (stream.is_flushable() || empty_fin) && !was_flushable {
+                        self.streams.push_flushable(stream_id);
+                    }
+                },
+
+                frame::Frame::ACK { .. } => {
+                    self.pkt_num_spaces[epoch].ack_elicited = true;
+                },
+
+                frame::Frame::HandshakeDone => {
+                    self.handshake_done_sent = false;
+                },
+
+                _ => (),
+            }
+        }
+
+        // Calculate available space in the packet based on congestion window.
+        let mut left = if self.recovery.loss_probes[epoch] > 0 && !is_closing {
+            // sending probe packets might cause the sender's bytes in flight to
+            // exceed the congestion window
+            trace!("will send probe.");
+            b.cap()
+        } else {
+            cmp::min(self.recovery.cwnd_available(), b.cap())
+        };
+        // Limit data sent by the server based on the amount of data received
+        // from the client before its address is validated.
+        if !self.verified_peer_address && self.is_server {
+            left = cmp::min(left, self.max_send_bytes);
+        }
+
+        let pn = self.pkt_num_spaces[epoch].next_pkt_num;
+        let pn_len = packet::pkt_num_len(pn)?;
+
+        // The AEAD overhead at the current encryption level.
+        let overhead = match self.pkt_num_spaces[epoch].overhead() {
+            //.ok_or(Error::Done)?;
+            Some(v) => v,
+            None => {
+                debug!(
+                    "send:Error::Done:self.pkt_num_spaces[epoch].overhead() None"
+                );
+                return Err(Error::Done);
+            },
+        };
+
+        // Fetch FEC frame.
+        let mut hdr = Header {
+            ty: pkt_type,
+            version: self.version,
+            dcid: self.dcid.clone(),
+            scid: self.scid.clone(),
+            pkt_num: 0,
+            pkt_num_len: pn_len,
+            token: self.token.clone(),
+            versions: None,
+            key_phase: false,
+            fec_info: Default::default(),
+        };
+
+        hdr.to_bytes(&mut b)?;
+
+        // Make sure we have enough space left for the header, the payload
+        // length, the packet number and the AEAD overhead.
+        left = match left.checked_sub(b.off() + pn_len + overhead) {
+            Some(v) => v,
+            None => {
+                debug!("send:Error::Done no enough space for header...overhead:{}   left:{}",b.off() + pn_len + overhead,left);
+                return Err(Error::Done);
+            },
+        };
+
+        // We assume that the payload length, which is only present in long
+        // header packets, can always be encoded with a 2-byte varint.
+        if pkt_type != packet::Type::Short {
+            left = match left.checked_sub(2) {
+                //.ok_or(Error::Done)?;
+                Some(v) => v,
+                None => {
+                    debug!("send:Error::Done: checked_sub(2)");
+                    return Err(Error::Done);
+                },
+            };
+        }
+
+        let mut frames: Vec<frame::Frame> = Vec::new();
+
+        let mut ack_eliciting = false;
+        let mut in_flight = false;
+        let mut m = 0;
+        let mut n = 0;
+
+        let mut payload_len = 0;
+
+        if let Some(redundancy) = self.fec_encoded.pop_front() {
+            if redundancy.data.len() <= left {
+                let fec_frame = frame::Frame::Fec {
+                    info: redundancy.info,
+                    data: redundancy.data,
+                };
+                payload_len += fec_frame.wire_len();
+                left -= fec_frame.wire_len();
+                ack_eliciting = true;
+                in_flight = true;
+                frames.push(fec_frame);
+                hdr.fec_info = redundancy.info;
+                packet::update_fec_info(&mut b, &hdr)?;
+            } else {
+                self.fec_encoded.push_front(redundancy);
+                return Err(Error::Done);
+            }
+        } else {
+            // no FEC frame, go the normal path.
+            // Create ACK frame.
+            if (self.pkt_num_spaces[epoch].ack_elicited
+                || (!self.pkt_num_spaces[epoch].recv_pkt_need_ack.is_empty()
+                    && pn
+                        % Connection::get_data_ack_ratio(
+                            self.init_data_ack_ratio,
+                        )
+                        == 0))
+                && !is_closing
+            {
+                let ack_delay =
+                    self.pkt_num_spaces[epoch].largest_rx_pkt_time.elapsed();
+
+                let scale = 2_u64
+                    .pow(self.local_transport_params.ack_delay_exponent as u32);
+
+                let ack_time = match time::SystemTime::now()
+                    .duration_since(time::UNIX_EPOCH)
+                {
+                    Ok(n) => n,
+                    Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+                };
+                let packet_time =
+                    ack_time.as_micros() as u64 - ack_delay.as_micros() as u64;
+                trace!(
+                    "packet_time={},ack_delay={}",
+                    packet_time,
+                    ack_delay.as_micros()
+                );
+                let ack_delay = ack_delay.as_micros() as u64 / scale;
+                let packet_time = packet_time / scale;
+
+                let frame = frame::Frame::ACK {
+                    packet_time,
+                    ack_delay,
+                    ranges: self.pkt_num_spaces[epoch].recv_pkt_need_ack.clone(),
+                };
+
+                if frame.wire_len() <= left {
+                    self.pkt_num_spaces[epoch].ack_elicited = false;
+
+                    payload_len += frame.wire_len();
+                    left -= frame.wire_len();
+
+                    frames.push(frame);
+                }
+            }
+            // Create ResetStream frame, when canceled miss-deadline blocks
+            if self.streams.has_canceled() {
+                for stream_id in self.streams.canceled() {
+                    let stream = match self.streams.get_mut(stream_id) {
+                        Some(v) => v,
+
+                        None => {
+                            // The stream doesn't exist anymore, so remove it from
+                            // the almost full set.
+                            self.streams.mark_canceled(stream_id, false);
+                            continue;
+                        },
+                    };
+
+                    let frame = frame::Frame::ResetStream {
+                        stream_id,
+                        error_code: 1, // todo:error code of miss deadline
+                        final_size: stream.send.block_size(),
+                    };
+
+                    self.streams.mark_canceled(stream_id, false);
+
+                    if frame.wire_len() > left {
+                        break;
+                    }
+
+                    payload_len += frame.wire_len();
+                    left -= frame.wire_len();
+
+                    frames.push(frame);
+
+                    ack_eliciting = true;
+                    in_flight = true;
+                }
+            }
+
+            if pkt_type == packet::Type::Short && !is_closing {
+                // Create HANDSHAKE_DONE frame.
+                if self.is_established()
+                    && !self.handshake_done_sent
+                    && self.is_server
+                    && self.version >= PROTOCOL_VERSION_DRAFT25
+                {
+                    let frame = frame::Frame::HandshakeDone;
+
+                    payload_len += frame.wire_len();
+                    left -= frame.wire_len();
+
+                    frames.push(frame);
+
+                    self.handshake_done_sent = true;
+                }
+
+                // Create MAX_STREAMS_BIDI frame.
+                if self.streams.should_update_max_streams_bidi() {
+                    let max = self.streams.update_max_streams_bidi();
+                    let frame = frame::Frame::MaxStreamsBidi { max };
+
+                    payload_len += frame.wire_len();
+                    left -= frame.wire_len();
+
+                    frames.push(frame);
+
+                    ack_eliciting = true;
+                    in_flight = true;
+                }
+
+                // Create MAX_STREAMS_UNI frame.
+                if self.streams.should_update_max_streams_uni() {
+                    let max = self.streams.update_max_streams_uni();
+                    let frame = frame::Frame::MaxStreamsUni { max };
+
+                    payload_len += frame.wire_len();
+                    left -= frame.wire_len();
+
+                    frames.push(frame);
+
+                    ack_eliciting = true;
+                    in_flight = true;
+                }
+
+                // Create MAX_DATA frame as needed.
+                if self.should_update_max_data() {
+                    let frame = frame::Frame::MaxData {
+                        max: self.max_rx_data_next,
+                    };
+
+                    if frame.wire_len() <= left {
+                        self.max_rx_data = self.max_rx_data_next;
+
+                        payload_len += frame.wire_len();
+                        left -= frame.wire_len();
+
+                        frames.push(frame);
+
+                        ack_eliciting = true;
+                        in_flight = true;
+                    }
+                }
+
+                // Create MAX_STREAM_DATA frames as needed.
+                for stream_id in self.streams.almost_full() {
+                    let stream = match self.streams.get_mut(stream_id) {
+                        Some(v) => v,
+
+                        None => {
+                            // The stream doesn't exist anymore, so remove it from
+                            // the almost full set.
+                            self.streams.mark_almost_full(stream_id, false);
+                            continue;
+                        },
+                    };
+
+                    let frame = frame::Frame::MaxStreamData {
+                        stream_id,
+                        max: stream.recv.update_max_data() as u64,
+                    };
+
+                    self.streams.mark_almost_full(stream_id, false);
+
+                    if frame.wire_len() > left {
+                        break;
+                    }
+
+                    payload_len += frame.wire_len();
+                    left -= frame.wire_len();
+
+                    frames.push(frame);
+
+                    ack_eliciting = true;
+                    in_flight = true;
+                }
+            }
+
+            // Create CONNECTION_CLOSE frame.
+            if let Some(err) = self.error {
+                let frame = frame::Frame::ConnectionClose {
+                    error_code: err,
+                    frame_type: 0,
+                    reason: Vec::new(),
+                };
+
+                if left >= frame.wire_len() {
+                    payload_len += frame.wire_len();
+                    left -= frame.wire_len();
+
+                    frames.push(frame);
+
+                    self.challenge = None;
+                    self.draining_timer = Some(now + (self.recovery.pto() * 3));
+
+                    ack_eliciting = true;
+                    in_flight = true;
+                }
+            }
+
+            // Create APPLICATION_CLOSE frame.
+            if let Some(err) = self.app_error {
+                if pkt_type == packet::Type::Short {
+                    let frame = frame::Frame::ApplicationClose {
+                        error_code: err,
+                        reason: self.app_reason.clone(),
+                    };
+
+                    payload_len += frame.wire_len();
+                    left -= frame.wire_len();
+
+                    frames.push(frame);
+
+                    self.draining_timer = Some(now + (self.recovery.pto() * 3));
+
+                    ack_eliciting = true;
+                    in_flight = true;
+                }
+            }
+
+            // Create PATH_RESPONSE frame.
+            if let Some(ref challenge) = self.challenge {
+                let frame = frame::Frame::PathResponse {
+                    data: challenge.clone(),
+                };
+
+                if left > frame.wire_len() {
+                    payload_len += frame.wire_len();
+                    left -= frame.wire_len();
+
+                    frames.push(frame);
+
+                    self.challenge = None;
+
+                    ack_eliciting = true;
+                    in_flight = true;
+                }
+            }
+
+            // Create CRYPTO frame.
+            if self.pkt_num_spaces[epoch].crypto_stream.is_flushable()
+                && left > frame::MAX_CRYPTO_OVERHEAD
+                && !is_closing
+            {
+                let crypto_len = left - frame::MAX_CRYPTO_OVERHEAD;
+                let crypto_buf = self.pkt_num_spaces[epoch]
+                    .crypto_stream
+                    .send
+                    .pop(crypto_len)?;
+
+                let frame = frame::Frame::Crypto { data: crypto_buf };
+
+                payload_len += frame.wire_len();
+                left -= frame.wire_len();
+
+                frames.push(frame);
+
+                ack_eliciting = true;
+                in_flight = true;
+            }
+            // Create a single STREAM frame for the first stream that is
+            // flushable.
+            if pkt_type == packet::Type::Short
+                && self.max_tx_data > self.tx_data
+                && left > frame::MAX_STREAM_OVERHEAD
+                && !is_closing
+            {
+                // log network and cc stats
+                let stats = self.stats();
+                let rtt = stats.rtt.as_millis() as f64;
+                // let bandwidth = stats.cwnd as f64 / rtt; // kb/s or bytes/ms
+
+                let bandwidth =
+                    self.recovery.cc.pacing_rate() as f64 / 8.0 / 1024.0; // bps->KB/s
+                let now_time_ms = match time::SystemTime::now()
+                    .duration_since(time::SystemTime::UNIX_EPOCH)
+                {
+                    Ok(n) => n.as_millis(),
+                    Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+                };
+                debug!("bw: {} KB/s; timestamp: {} ms", bandwidth, now_time_ms);
+
+                debug!(
+                    "RTT: {} ms, bbr_min_rtt: {} ms",
+                    rtt,
+                    self.recovery.cc.bbr_min_rtt().as_millis()
+                );
+
+                // Create a block for each stream
+                while let Some(stream_id) = self.streams.peek_flushable(
+                    bandwidth as f64,
+                    rtt,
+                    pn, // next_packet_id
+                    now_time_ms as u64,
+                )? {
+                    let block = self.streams.get_block(stream_id);
+                    match stream_blocks.as_mut() {
+                        Some(blocks) => blocks.push(block),
+                        None => {}
+                    }
+                    let stream = match self.streams.get_mut(stream_id) {
+                        Some(v) => v,
+
+                        None => continue,
+                    };
+                    // create block info frame in the first packet of a block
+                    if stream.send.is_new() {
+                        // Create BlockInfo frame
+                        let (block_priority, block_deadline) =
+                            stream.send.get_block_info();
+                        let frame = frame::Frame::BlockInfo {
+                            stream_id,
+                            block_size: stream.send.block_size() as u64,
+                            block_priority,
+                            block_deadline,
+                            // start_time: stream.send.start_time() as u64,
+                            start_time: (stream.send.start_time() as i128
+                                - self.bct_offset)
+                                as u64,
+                        };
+                        if frame.wire_len() <= left {
+                            payload_len += frame.wire_len();
+                            left -= frame.wire_len();
+                            frames.push(frame);
+                            ack_eliciting = true;
+                            in_flight = true;
+                            stream.send.un_new()
+                        }
+                    }
+                    if !(left > frame::MAX_STREAM_OVERHEAD) {
+                        if stream.is_flushable() {
+                            self.streams.push_flushable(stream_id);
+                        }
+                        break;
+                    }
+                    // Make sure we can fit the data in the packet.
+                    let max_len = cmp::min(
+                        left,
+                        (self.max_tx_data - self.tx_data) as usize,
+                    );
+
+                    // If this stream belongs to a FEC group, then limit its max_len to the shard_size
+                    // The packet will pad to the shard_size when the stream doesn't have enough data
+                    let max_len = if !self.fec.is_empty() {
+                        let fec_group = self.fec.get(&0).unwrap();
+                        cmp::min(
+                            fec_group.shard_size
+                                - payload_len
+                                - 1
+                                - octets::varint_len(stream_id)
+                                - 8 * 2, // estimate the maximum size of the data frame to fit the FEC group size. This estimation will under estimate the capacity of the frame
+                            max_len,
+                        )
+                    } else {
+                        max_len
+                    };
+
+                    let off = stream.send.off();
+
+                    // Try to accurately account for the STREAM frame's overhead,
+                    // such that we can fill as much of the packet buffer as
+                    // possible.
+                    let overhead = 1
+                        + octets::varint_len(stream_id)
+                        + octets::varint_len(off)
+                        + octets::varint_len(max_len as u64);
+
+                    let max_len = match max_len.checked_sub(overhead) {
+                        Some(v) => v,
+
+                        None => continue,
+                    };
+
+                    let stream_buf = stream.send.pop(max_len)?;
+
+                    if stream_buf.is_empty() && !stream_buf.fin() {
+                        continue;
+                    }
+
+                    let tail = stream.send.len;
+
+                    self.tx_data += stream_buf.len() as u64;
+
+                    // Decide redundancy (the value of `m` and `n`) for blocks which don't have a fec group
+                    let mut temp_m = 0;
+                    let mut temp_n = 0;
+
+                    if self.fec.is_empty() {
+                        let solution_redundancy = if self.tail_size.is_some()
+                            && self.tail_size != Some(0)
+                        {
+                            Connection::get_redundancy_rate(
+                                &block,
+                                self.init_redundancy_rate,
+                                rtt,
+                                bandwidth * 1024.0,
+                                now_time_ms as u64,
+                                self.recovery.lost_count,
+                                self.recovery.total_pkt_nums,
+                            )
+                        } else {
+                            0.0
+                        };
+
+                        if stream.send.len >= 1 {
+                            temp_m = ((stream.send.len - 1) / 1350 + 1) as u8;
+                            // ? why do we need to limit the max value of m ?
+                            if temp_m >= 20 {
+                                temp_m = 20;
+                            }
+                            temp_n = (temp_m as f32 * solution_redundancy) as u8;
+
+                            debug!(
+                                "solution check: (temp_m, temp): ({}, {})",
+                                temp_m, temp_n
+                            );
+
+                            if temp_m == 0 || temp_n == 0 {
+                                temp_m = 0;
+                                temp_n = 0;
+                            }
+
+                            debug!(
+                                "fec check:{} {} {} {} {}",
+                                stream.send.block_size(),
+                                stream.send.len,
+                                solution_redundancy,
+                                temp_m,
+                                temp_n
+                            );
+                        }
+                    }
+                    // Decide whether to enable redundacy code feature
+                    if let Some(tail_threshold) = self.tail_size {
+                        // Add redundancy code for the last few blocks if given the number `tail_size` explicitly in app
+                        if tail <= tail_threshold {
+                            debug!(
+                                "tail: {}, tail_threshold: {}, set m, n: {}, {}",
+                                tail, tail_threshold, temp_m, temp_n
+                            );
+                            m = temp_m;
+                            n = temp_n;
+                        }
+                    } else {
+                        // Disable redundancy code feature at default
+                        debug!("Disable redundancy by None tail_size");
+                    }
+
+                    debug!(
+                        "payload send {} bytes of stream {}",
+                        stream_buf.len(),
+                        stream_id
+                    );
+
+                    let frame = frame::Frame::Stream {
+                        stream_id,
+                        data: stream_buf,
+                    };
+
+                    payload_len += frame.wire_len();
+                    left -= frame.wire_len();
+
+                    frames.push(frame);
+
+                    ack_eliciting = true;
+                    in_flight = true;
+
+                    // If the stream is still flushable, push it to the back of
+                    // the queue again.
+                    if stream.is_flushable() {
+                        self.streams.push_flushable(stream_id);
+                    }
+
+                    break;
+                }
+            }
+
+            // Create PING for PTO probe.
+            if self.recovery.loss_probes[epoch] > 0
+                && !ack_eliciting
+                && left >= 1
+                && !is_closing
+            {
+                let frame = frame::Frame::Ping;
+
+                payload_len += frame.wire_len();
+                left -= frame.wire_len();
+
+                frames.push(frame);
+
+                ack_eliciting = true;
+                in_flight = true;
+            }
+        }
+
+        if ack_eliciting {
+            self.recovery.loss_probes[epoch] =
+                self.recovery.loss_probes[epoch].saturating_sub(1);
+        }
+
+        if frames.is_empty() {
+            trace!("frames is empty"); // may be caused by insufficient space in available cwnd
+            return Err(Error::Done);
+        }
+
+        // Pad the client's initial packet.
+        if !self.is_server && pkt_type == packet::Type::Initial {
+            let pkt_len = pn_len + payload_len + overhead;
+
+            let frame = frame::Frame::Padding {
+                len: cmp::min(MIN_CLIENT_INITIAL_LEN - pkt_len, left),
+            };
+
+            payload_len += frame.wire_len();
+
+            frames.push(frame);
+
+            in_flight = true;
+        }
+
+        // Pad payload so that it's always at least 4 bytes.
+        // TODO Pad payload to the same size when this is the last stream buffer.
+        // we can directly modify the payload min len
+        let payload_min_len = if pkt_type == packet::Type::Short
+            && ((m != 0 && n != 0) || !self.fec.is_empty())
+        {
+            if !self.fec.is_empty() {
+                let fec_group = self.fec.get(&0).unwrap();
+                fec_group.shard_size // pad fec packet according to its fec group
+            } else {
+                1301
+            }
+        } else {
+            PAYLOAD_MIN_LEN
+        };
+        debug!(
+            "payload len is {}, min length should be {}",
+            payload_len, payload_min_len
+        );
+        if payload_len < payload_min_len {
+            let frame = frame::Frame::Padding {
+                len: payload_min_len - payload_len,
+            };
+
+            payload_len += frame.wire_len();
+
+            frames.push(frame);
+
+            in_flight = true;
+        }
+
+        payload_len += overhead;
+
+        // Only long header packets have an explicit length field.
+        if pkt_type != packet::Type::Short {
+            let len = pn_len + payload_len;
+            b.put_varint(len as u64)?;
+        }
+
+        packet::encode_pkt_num(pn, &mut b)?;
+
+        let payload_offset = b.off();
+
+        trace!(
+            "{} tx pkt {:?} len={} pn={}",
+            self.trace_id,
+            hdr,
+            payload_len,
+            pn
+        );
+
+        // Encode frames into the output packet.
+        for frame in &frames {
+            debug!("{} tx frm {:?}", self.trace_id, frame);
+
+            frame.to_bytes(&mut b)?;
+        }
+
+        // FEC encoding
+        if m != 0 && n != 0 || !self.fec.is_empty() {
+            // Find the corresponding fec group for the current block
+            // or use the given parameter m, n to create one
+            let fec_group = match self.fec.entry(0) {
+                hash_map::Entry::Occupied(v) => v.into_mut(),
+                hash_map::Entry::Vacant(v) => {
+                    let fec_info = fec::FecStatus {
+                        m,
+                        n,
+                        group_id: self.next_fec_group_id,
+                        index: 0,
+                    };
+                    self.next_fec_group_id += 1;
+                    v.insert(fec::FecGroup::new(fec_info, payload_len - overhead))
+                },
+            };
+            fec_group.info.index = fec_group.next_index;
+            fec_group.next_index += 1;
+
+            debug!(
+                "fec group info: {:?}, data length: {}",
+                fec_group.info, fec_group.shard_size
+            );
+            debug!(
+                "payload_len {}, overhead {}, payload_len - overhead {}",
+                payload_len,
+                overhead,
+                payload_len - overhead
+            );
+            let (_, mut payload) = b.split_at(payload_offset)?;
+            hdr.fec_info = fec_group.info;
+            let fec_frame = fec::FecFrame {
+                info: fec_group.info,
+                data: payload.slice(payload_len - overhead)?.to_vec(),
+            };
+            fec_group.feed_fec_frame(&fec_frame);
+            if fec_group.full() {
+                let r = fec_group.encode();
+                for a in r {
+                    self.fec_encoded.push_back(a);
+                }
+                // Remove fec_groups
+                self.fec.remove(&0);
+            }
+            packet::update_fec_info(&mut b, &hdr)?;
+        }
+
+        let aead = match self.pkt_num_spaces[epoch].crypto_seal {
+            Some(ref v) => v,
+            None => return Err(Error::InvalidState),
+        };
+
+        let written = packet::encrypt_pkt(
+            &mut b,
+            pn,
+            pn_len,
+            payload_len,
+            payload_offset,
+            aead,
+        )?;
+
+        let encode_time = now.elapsed();
+        trace!("Encode time is {}", encode_time.as_micros());
+        now = time::Instant::now();
+        let sent_pkt = recovery::Sent {
+            pkt_num: pn,
+            frames,
+            time: now,
+            size: if ack_eliciting { written } else { 0 },
+            ack_eliciting,
+            in_flight,
+            fec_info: hdr.fec_info,
+        };
+
+        debug!("tx pkt {:?} len={} pn={}", hdr, payload_len, pn);
+
+        self.recovery.on_packet_sent(
+            sent_pkt,
+            epoch,
+            self.is_established(),
+            now,
+            &self.trace_id,
+        );
+
+        self.pkt_num_spaces[epoch].next_pkt_num += 1;
+
+        self.sent_count += 1;
+
+        // On the client, drop initial state after sending an Handshake packet.
+        if !self.is_server && hdr.ty == packet::Type::Handshake {
+            self.drop_epoch_state(packet::EPOCH_INITIAL);
+        }
+
+        self.max_send_bytes = self.max_send_bytes.saturating_sub(written);
+
+        // (Re)start the idle timer if we are sending the first ack-eliciting
+        // packet since last receiving a packet.
+        if ack_eliciting && !self.ack_eliciting_sent {
+            if let Some(idle_timeout) = self.idle_timeout() {
+                self.idle_timer = Some(now + idle_timeout);
+            }
+        }
+
+        if ack_eliciting {
+            self.ack_eliciting_sent = true;
+        }
+
+        Ok(written)
+    }
+
     /// Reads contiguous data from a stream into the provided slice.
     ///
     /// The slice must be sized by the caller and will be populated up to its
