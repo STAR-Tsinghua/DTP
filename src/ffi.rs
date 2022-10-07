@@ -290,6 +290,11 @@ pub extern fn quiche_config_set_data_ack_ratio(config: &mut Config, ratio: u64) 
 pub extern fn quiche_config_set_redundancy_rate(config: &mut Config, rate: f32) {
     config.init_redundancy_rate = rate;
 }
+// update by mc
+#[no_mangle]
+pub extern fn quiche_config_set_init_tail_size(config: &mut Config, tail_size: u64) {
+    config.init_tail_size = tail_size;
+}
 
 #[no_mangle]
 pub extern fn quiche_config_free(config: *mut Config) {

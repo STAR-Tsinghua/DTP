@@ -475,6 +475,9 @@ pub struct Config {
     /// Example: rate = 0.2, m = 20 => n = 4
     init_redundancy_rate: f32,
 
+    /// The last few bytes in the stream can be encoded by FEC
+    init_tail_size: u64,
+
     /// Type of the scheduler
     /// default: scheduler::SchedulerType::Dynamic
     scheduler_type: scheduler::SchedulerType,
@@ -504,6 +507,7 @@ impl Config {
             init_pacing_rate: u64::max_value(),
             init_data_ack_ratio: 4,
             init_redundancy_rate: 0.0f32,
+            init_tail_size: 5,
             scheduler_type: SchedulerType::Dynamic, // default scheduler
         })
     }
@@ -1224,7 +1228,7 @@ impl Connection {
 
             fec_decoders: Default::default(),
 
-            tail_size: if cfg!(feature = "fec") { Some(5) } else { None },
+            tail_size: if cfg!(feature = "fec") { Some(config.init_tail_size) } else { None },
         });
 
         if let Some(odcid) = odcid {

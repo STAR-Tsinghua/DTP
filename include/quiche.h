@@ -195,6 +195,7 @@ enum quiche_cc_algorithm {
 void quiche_config_set_cc_algorithm(quiche_config *config, enum quiche_cc_algorithm algo);
 // TODO: void quiche_config_set_cc_algorithm_name(quiche_config *config, const char* name);
 
+// Set redundancy rate for FEC
 void quiche_config_set_redundancy_rate(quiche_config *config, float rate);
 
 enum quiche_scheduler_type {
@@ -217,6 +218,9 @@ void quiche_config_set_scheduler_name(quiche_config *config, const char* name);
 
 // Sets the data ack ratios
 void quiche_config_set_data_ack_ratio(quiche_config *config, uint64_t ratio);
+
+// Set init tail size for FEC
+void quiche_config_set_init_tail_size(quiche_config *config, uint64_t tail_size);
 
 // Frees the config object.
 void quiche_config_free(quiche_config *config);
