@@ -76,8 +76,6 @@ lazy_static = "1"
 rand = "0.7"
 bitflags = "1.2"
 threadpool = "1.8.1"
-ntp = "0.5"
-time = "0.1"
 reed-solomon-erasure = { version = "4.0", features = ["simd-accel"], optional= true} # fec
 libm = "0.2"
 
