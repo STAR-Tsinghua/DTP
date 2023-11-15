@@ -3,6 +3,8 @@
 
 DTP 协议是一个用户态的安全高性能传输协议。DTP 基于 QUIC 协议进行研发，保留 QUIC 的其他特性的同时将数据进行了“块”的抽象，为应用提供截止时间感知(Deadline-aware）的传输服务。根据用户给数据设定的截止时间（Deadline）、优先级（Priority）、依赖关系（dependency）等进行源端调度和源端丢弃的服务，并提供自适应冗余（Adaptive redundancy）来缓解重传造成的时延，在例如流媒体传输等传输场景下可以降低平均传输时延，提升用户体验。
 
+详细的机制介绍请参考我们的论文：[workshop版本](https://dl.acm.org/doi/abs/10.1145/3343180.3343191)，[完整版](https://ieeexplore.ieee.org/abstract/document/9940391)。
+
 我们在 IETF [草案](https://datatracker.ietf.org/doc/html/draft-shi-quic-dtp-06) 中概述了 DTP 对 QUIC 的修改。
 
 DTP 协议基于 [quiche](https://github.com/cloudflare/quiche) 进行开发，该实现提供 API 来进行数据包的发送与处理，上层应用需要提供 I/O （如处理接口）并且需要使用具有定时器的事件循环来实现相关的数据收发逻辑。

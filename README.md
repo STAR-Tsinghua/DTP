@@ -5,6 +5,8 @@ DTP is a user-space secure and high performance transport protocol based on QUIC
 DTP transfers data in blocks and deadline-aware service for applications.  DTP strategically balances blocks' factors including deadline, priority, and dependency when deciding which block to send or drop. In addition, provide adaptive FEC to alleviate the delay caused by retransmission.
 DTP can improve performance in scenarios like streaming media transmission. 
 
+For detailed introduction, please refer to our paper: [workshop version](https://dl.acm.org/doi/abs/10.1145/3343180.3343191), [full version](https://ieeexplore.ieee.org/abstract/document/9940391).
+
 We outline the DTP’s modification of the QUIC in IETF [draft](https://datatracker.ietf.org/doc/html/draft-shi-quic-dtp-06).
 
 The DTP protocol is developed based on [quiche](https://github.com/cloudflare/quiche). This implementation provides the API to send and process packets of QUIC. The application is responsible for providing I/O (e.g. sockets handling) as well as an event loop with support for timers.
