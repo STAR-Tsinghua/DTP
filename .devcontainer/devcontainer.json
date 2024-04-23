@@ -1,0 +1,10 @@
+{
+  "image": "mcr.microsoft.com/devcontainers/universal:focal",
+  "features": {
+      "ghcr.io/devcontainers/features/rust:1": {},
+      "ghcr.io/rocker-org/devcontainer-features/apt-packages:1": {
+      "packages": "curl,vim,libev-dev,uthash-dev"
+      }
+  }
+}
+  

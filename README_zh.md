@@ -176,7 +176,13 @@ C API 和 Rust API 的设计相同，只是处理了 C 语言自身的一些限�
 4. go: 1.10.4 linux/amd64
 5. cmake: 3.10.2
 6. perl: v5.26.1
-7. gcc: 9.3.0, 10.3.0
+7. gcc: 9.3.0, 10.3.0 # 高于 11.0.0 的版本需要在编译的取消 -Werror
+
+### Github codespace devcontainer
+
+我们为当前仓库提供了 github codespace 支持，你可以通过网页上的 "Code" 按钮来创建 codespace 来对这个仓库进行快速的测试。
+
+**！注意！**：在创建 codespace 之后，你需要手动重建镜像(rebuild image)，否则 Rust 语言的相关支持将无法使用。
 
 ### 提供的镜像
 

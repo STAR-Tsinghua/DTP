@@ -178,7 +178,13 @@ Tested environments and dependencies:
 4. go: 1.10.4 linux/amd64
 5. cmake: 3.10.2
 6. perl: v5.26.1
-7. gcc: 9.3.0, 10.3.0
+7. gcc: 9.3.0, 10.3.0 # Versions above 11.0.0 require the -Werror flag to be turned off during compilation.
+
+### Github codespace devcontainer
+
+We provide github codespace support for this project. You can create github codespace by clicking the "Code" button on the website and give a first try of this project.
+
+**!Attention!**: You need to rebuild the image after creating the codespace manually to enable Rust language support.
 
 ### Images for compilation and implementation
 
